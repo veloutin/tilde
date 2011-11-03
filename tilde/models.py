@@ -5,6 +5,7 @@ from storm.locals import (
     Unicode,
     DateTime,
     Reference,
+    Int,
 )
 
 def get_store(url):
@@ -14,6 +15,7 @@ def get_store(url):
 class Home(Storm):
     """ A home directory """
     __storm_table__ = u"tilde_home"
+    id = Int(primary=True)
 
     server_name = Unicode()
     cur_server_name = Unicode()
