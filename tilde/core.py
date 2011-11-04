@@ -89,6 +89,7 @@ class ShareUpdater(object):
         if not os.path.exists(parent):
             os.makedirs(parent)
         shutil.move(old, new)
+        home.cur_path = home.path
 
     def remove(self, home):
         realpath = self.get_real_path(home.path)

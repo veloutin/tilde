@@ -26,13 +26,20 @@ class Home(Storm):
     owner = Unicode()
     cur_owner = Unicode()
 
-    group = Unicode()
-    cur_group = Unicode()
+    group = Unicode(name=u"groupname")
+    cur_group = Unicode(name=u"cur_groupname")
 
-    external_id = Unicode()
+    uuid = Unicode()
 
     ts = DateTime()
 
+    def __unicode__(self):
+        return u"<Home: {0} on {1} ({2}:{3})>".format(
+            self.server_name,
+            self.path,
+            self.owner or u"",
+            self.group or u"",
+        )
 
     @property
     def server_changed(self):
