@@ -43,14 +43,14 @@ class ShareUpdater(object):
     def get_group(self, path):
         return self.gid_to_name(os.stat(path).st_gid)
 
-    def update(self, home):
-        if home.server_changed:
+    def update(self, home, state):
+        if home.server_name != state.server_name:
             if home.server_name == self.server:
                 mlog.debug("req create")
-                self.create(home)
-            elif home.cur_server_name == self.server:
+                self.create(home, state)
+            elif state.server_name == self.server:
                 mlog.debug("req remove")
-                self.remove(home)
+                self.remove(home, state)
                 return
 
         if home.server_name != self.server:
@@ -58,13 +58,13 @@ class ShareUpdater(object):
                        .format(home.server_name, self.server))
             return
 
-        if home.path_changed:
-            self.move(home)
+        if home.path != state.path:
+            self.move(home, state)
 
-        self.set_perms(home)
+        self.set_perms(home, state)
 
 
-    def create(self, home):
+    def create(self, home, state):
         realpath = self.get_real_path(home.path)
         if os.path.exists(realpath):
             mlog.debug(u"Path exists: {0}".format(realpath))
@@ -78,20 +78,20 @@ class ShareUpdater(object):
             mlog.info(u"makedirs: {0}".format(realpath))
             os.makedirs(realpath, self.DEF_MODE)
 
-        home.cur_server_name = self.server
-        home.cur_path = home.path
+        state.server_name = home.server_name
+        state.path = home.path
 
-    def move(self, home):
-        old = self.get_real_path(home.cur_path)
+    def move(self, home, state):
+        old = self.get_real_path(state.path)
         new = self.get_real_path(home.path)
         mlog.info(u"Moving {0} to {1}".format(old, new))
         parent = os.path.split(new)[0]
         if not os.path.exists(parent):
             os.makedirs(parent)
         shutil.move(old, new)
-        home.cur_path = home.path
+        state.path = home.path
 
-    def remove(self, home):
+    def remove(self, home, state):
         realpath = self.get_real_path(home.path)
         if os.path.exists(realpath):
             if self.archive_root:
@@ -102,6 +102,13 @@ class ShareUpdater(object):
                 parent = os.path.split(archive_path)[0]
                 if not os.path.exists(parent):
                     os.makedirs(parent)
+
+                suffix = None
+                orig_ark = archive_path
+                while os.path.exists(archive_path):
+                    suffix = suffix + 1 if suffix else 1
+                    archive_path = u"{0}{1}".format(orig_ark, suffix)
+
                 shutil.move(realpath, archive_path)
 
             else:
@@ -110,11 +117,12 @@ class ShareUpdater(object):
         else:
             mlog.debug(u"Path does not exist: {0}".format(realpath))
 
-        home.cur_server_name = None
-        home.cur_path = None
+        state.path = None
 
-    def set_perms(self, home):
+    def set_perms(self, home, state):
         realpath = self.get_real_path(home.path)
+        if not os.path.exists(realpath):
+            self.create(home, state)
 
         if home.owner:
             setuid = home.owner
@@ -132,9 +140,3 @@ class ShareUpdater(object):
 
         if setuid or setuid:
             os.chown(realpath, numuid, numgid)
-            if setuid:
-                home.cur_owner = setuid
-            if setgid:
-                home.cur_group = setgid
-
-

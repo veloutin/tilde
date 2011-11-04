@@ -18,33 +18,33 @@ class Home(Storm):
     id = Int(primary=True)
 
     server_name = Unicode()
-    cur_server_name = Unicode()
-
     path = Unicode()
-    cur_path = Unicode()
-
     owner = Unicode()
-    cur_owner = Unicode()
-
     group = Unicode(name=u"groupname")
-    cur_group = Unicode(name=u"cur_groupname")
-
     uuid = Unicode()
 
     ts = DateTime()
 
     def __unicode__(self):
         return u"<Home: {0} on {1} ({2}:{3})>".format(
-            self.server_name,
             self.path,
+            self.server_name,
             self.owner or u"",
             self.group or u"",
         )
 
-    @property
-    def server_changed(self):
-        return self.server_name != self.cur_server_name
+class HomeState(Storm):
+    """ State of a home on a server """
+    __storm_table__ = u"tilde_home_state"
+    __storm_primary__ = u"id", u"server_name"
+    id = Int()
+    home = Reference(id, Home.id)
+    server_name = Unicode()
 
-    @property
-    def path_changed(self):
-        return self.path != self.cur_path
+    path = Unicode()
+
+    def __unicode__(self):
+        return u"<HomeState: {0} on {1})>".format(
+            self.path,
+            self.server_name,
+        )

@@ -9,7 +9,7 @@ import sys
 from .mock import MockPwd, MockGrp, MockOS
 
 from tilde import core
-from tilde.models import Home
+from tilde.models import Home, HomeState
 
 
 mpwd = MockPwd([
@@ -54,16 +54,17 @@ class UpdateTest(unittest.TestCase):
         home.path = "/home/data/badger"
         home.owner = "jack"
         home.group = "employees"
+        state = HomeState()
 
         self.assertFalse(os.path.exists(real_path))
 
         # Request creation on this server
         home.server_name = CUR_SRV
-        self.share.update(home)
+        self.share.update(home, state)
 
         self.assertTrue(os.path.exists(real_path))
-        self.assertEquals(home.cur_server_name, CUR_SRV)
-        self.assertEquals(home.cur_path, "/home/data/badger")
+        self.assertEquals(state.server_name, CUR_SRV)
+        self.assertEquals(state.path, "/home/data/badger")
         self.assertEquals(self.mos.owns[real_path], (1502, 2000))
 
 
@@ -72,7 +73,7 @@ class UpdateTest(unittest.TestCase):
         arch_path = os.path.join(self.archive, "home/data/snake")
         home.path = "/home/data/snake"
         home.owner = "jill"
-        self.share.update(home)
+        self.share.update(home, state)
 
         self.assertFalse(os.path.exists(real_path))
         self.assertTrue(os.path.exists(new_path))
@@ -80,12 +81,11 @@ class UpdateTest(unittest.TestCase):
 
         # Request archival
         home.server_name = None
-        self.share.update(home)
+        self.share.update(home, state)
 
         self.assertFalse(os.path.exists(new_path))
         self.assertTrue(os.path.exists(arch_path))
-        self.assertEquals(home.cur_server_name, None)
-        self.assertEquals(home.cur_path, None)
+        self.assertEquals(state.path, None)
 
 
     def tearDown(self):
