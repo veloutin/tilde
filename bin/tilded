@@ -1,21 +1,37 @@
 #!/usr/bin/env python
 from tilde import runner
+from tilde import loader
 import time
-import sys
 
 import traceback
+import optparse
 import logging
-logging.basicConfig(level=1)
 
-DBURL = "postgres://pgdevel:edulinux@localhost/tilde"
-name = sys.argv[1].decode(sys.stdin.encoding or "utf-8")
-root = sys.argv[2].decode(sys.stdin.encoding or "utf-8")
-archroot = sys.argv[3].decode(sys.stdin.encoding or "utf-8") if len(sys.argv) > 3 else None
 
+opt = optparse.OptionParser()
+opt.set_default("loglevel", logging.WARN)
+opt.add_option("-c", "--config", dest="cfgfile", default="/etc/tilde/tilde.ini")
+opt.add_option("-v", action="store_const", dest="loglevel", const=logging.INFO)
+opt.add_option("-d", action="store_const", dest="loglevel", const=logging.DEBUG)
+opt.add_option("-q", action="store_const", dest="loglevel", const=logging.ERROR)
+opt.add_option("-1", action="store_true", dest="once")
+
+
+opts, args = opt.parse_args()
+logging.basicConfig(level=opts.loglevel)
 while True:
+    sleeptime = 60
     try:
-        runner.run(DBURL, name, root, archroot)
-        time.sleep(60)
+        cfg = loader.load_config(opts.cfgfile)
+        sleeptime = cfg['sleeptime']
+
+        for srv in cfg['servers'].values():
+            runner.run(cfg['dburl'],
+                       srv['name'],
+                       srv['root'],
+                       srv.get('archive_root')
+                      )
+
     except KeyboardInterrupt:
         break
     except Exception, e:
@@ -23,3 +39,7 @@ while True:
         import pdb
         pdb.post_mortem()
 
+    if opts.once:
+        break
+
+    time.sleep(sleeptime)
