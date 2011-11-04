@@ -1,0 +1,18 @@
+Source: tilde
+Section: utils
+Priority: optional
+Maintainer: Vincent Vinet <vvinet@revolutionlinux.com>
+Build-Depends: debhelper (>= 7.0), python, python-central
+Standards-Version: 3.9.1
+Homepage: http://www.revolutionlinux.com
+XS-Python-Version: >= 2.6
+
+Package: tilde
+Architecture: all
+Depends: ${python:Depends}, ${misc:Depends}, python (>= 2.6), python-storm (>= 0.15)
+Recommends: python-psycopg2
+Suggests: postgresql-client
+XB-Python-Version: ${python:Versions}
+Description: Tilde allows easy management of home user home directory lifecycle
+ .
+
