@@ -1,0 +1,4 @@
+[gerrit]
+host=gerrit.rlnx.com
+port=2202
+project=interne/tilde.git
