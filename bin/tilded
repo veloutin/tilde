@@ -1,11 +1,11 @@
 #!/usr/bin/env python
-from tilde import runner
-from tilde import loader
-import time
-
-import traceback
-import optparse
 import logging
+import optparse
+import pdb
+
+from twisted.internet import reactor, task
+
+from tilde import runner, loader
 
 
 opt = optparse.OptionParser()
@@ -14,32 +14,54 @@ opt.add_option("-c", "--config", dest="cfgfile", default="/etc/tilde/tilde.ini")
 opt.add_option("-v", action="store_const", dest="loglevel", const=logging.INFO)
 opt.add_option("-d", action="store_const", dest="loglevel", const=logging.DEBUG)
 opt.add_option("-q", action="store_const", dest="loglevel", const=logging.ERROR)
-opt.add_option("-1", action="store_true", dest="once")
+opt.add_option("-i", type=int, dest="interval", default=0)
+opt.add_option("--pdb", action="store_true", dest="pdb")
 
 
 opts, args = opt.parse_args()
 logging.basicConfig(level=opts.loglevel)
-while True:
-    sleeptime = 60
-    try:
-        cfg = loader.load_config(opts.cfgfile)
-        sleeptime = cfg['sleeptime']
 
-        for srv in cfg['servers'].values():
-            runner.run(cfg['dburl'],
-                       srv['name'],
-                       srv['root'],
-                       srv.get('archive_root')
-                      )
+def do_run(cfg):
+    for srv in cfg['servers'].values():
+        runner.run(cfg['dburl'],
+                   srv['name'],
+                   srv['root'],
+                   srv.get('archive_root')
+                  )
 
-    except KeyboardInterrupt:
-        break
-    except Exception, e:
-        traceback.print_exc()
-        import pdb
-        pdb.post_mortem()
+def handle_interrupt(f):
+    f.trap(KeyboardInterrupt)
+    logging.info("Interrupted")
 
-    if opts.once:
-        break
+def fail_miserably(f):
+    logging.error("Failed with error: %s", f.value)
+    reactor.stop()
 
-    time.sleep(sleeptime)
+def done(result=None):
+    reactor.stop()
+
+def debug(f):
+    pdb.post_mortem(f.getTracebackObject())
+    raise f
+
+def make_a_run(err=None):
+    cfg = task.deferLater(reactor, 0, loader.load_config, opts.cfgfile)
+    cfg.addCallback(do_run)
+    if opts.pdb:
+        cfg.addErrback(debug)
+    if err:
+        cfg.addErrback(err)
+    return cfg
+
+if not opts.interval:
+    run = make_a_run()
+else:
+    def log_and_continue(err):
+        logging.error("Failed with error: %s", err.value)
+    loop = task.LoopingCall(make_a_run, log_and_continue)
+    run = loop.start(opts.interval)
+
+run.addErrback(handle_interrupt)
+run.addCallbacks(done, fail_miserably)
+
+reactor.run()
