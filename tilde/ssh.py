@@ -41,26 +41,28 @@ class SSHServer(object):
                                          self._port)
         factory = MyFactory()
         factory.server = self
-        factory.protocol = _CommandTransport
+        factory.protocol = SSHTransport
         factory.serverConnected = Deferred()
+        factory.serverConnected.addCallback(lambda *i: self)
 
         d = tcpEndpoint.connect(factory)
         d.addErrback(factory.serverConnected.errback)
 
-        return factory.commandConnected
+        return factory.serverConnected
 
     def runCommand(self, command, protocol):
+        print "RunCommand", command
         factory = Factory()
         factory.protocol = protocol
         factory.finished = Deferred()
 
         channel = _CommandChannel(command, factory)
-        d = self.connection.openChannel(channel)
+        d = self.connection.requestChannel(channel)
         d.addErrback(factory.finished.errback)
         return factory.finished
 
 
-class _CommandTransport(SSHClientTransport):
+class SSHTransport(SSHClientTransport):
     _secured = False
 
     def verifyHostKey(self, hostKey, fingerprint):
@@ -69,12 +71,9 @@ class _CommandTransport(SSHClientTransport):
 
     def connectionSecure(self):
         self._secured = True
-        command = _CommandConnection(
-            self.factory.command,
-            self.factory.commandProtocolFactory,
-            self.factory.commandConnected)
+        conn = _CommandConnection(self.factory)
         userauth = SSHUserAuthClient(
-            os.environ['USER'], ConchOptions(), command)
+            os.environ['USER'], ConchOptions(), conn)
         self.requestService(userauth)
 
 
@@ -87,13 +86,14 @@ class _CommandTransport(SSHClientTransport):
 class _CommandConnection(SSHConnection):
     _ready = False
 
-    def __init__(self, server):
+    def __init__(self, factory):
         SSHConnection.__init__(self)
-        self._server = server
+        self.factory = factory
         self._pendingChannelsDeferreds = []
 
 
     def serviceStarted(self):
+        print "Connection service started"
         SSHConnection.serviceStarted(self)
         self._ready = True
         for d, channel in self._pendingChannelsDeferreds:
@@ -101,6 +101,9 @@ class _CommandConnection(SSHConnection):
             d.callback(True)
         else:
             del self._pendingChannelsDeferreds[:]
+
+        self.factory.server.connection = self
+        self.factory.serverConnected.callback(self)
 
     def serviceStopped(self):
         for d, channel in self._pendingChannelsDeferreds:
@@ -117,6 +120,7 @@ class _CommandConnection(SSHConnection):
         @param channel: the C{SSHChannel} instance to open
         @return a C{Deferred}
         '''
+        print "request Channel", channel, self._ready
         if self._ready:
             self.openChannel(channel)
             return succeed(True)
@@ -186,8 +190,6 @@ class StdoutEcho(Protocol):
 
     def connectionMade(self):
         print self, "connectionMade", self.transport
-        from twisted.internet import reactor
-        reactor.callLater(3, self.transport.loseConnection)
 
     def connectionLost(self, reason):
         print self, "connectionLost", reason
@@ -227,6 +229,7 @@ def main():
     server = SSHServer(reactor, "localhost", 22)
     d = server.connect()
     def runCommands(server):
+        print "Server connected"
         c1 = server.runCommand("hostname; sleep 1; hostname; sleep 3; echo NONO", StdoutEcho)
         c2 = server.runCommand("hostname -f; sleep 2; echo YAYA", StdoutEcho)
         c1.addErrback(err, "ssh command/copy to stdout failed")
