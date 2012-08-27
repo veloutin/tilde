@@ -18,6 +18,7 @@ CREATE TABLE tilde_home_state (
     id              INTEGER REFERENCES tilde_home(id),
     server_name     VARCHAR,
     path            VARCHAR,
+    status          VARCHAR,
     ts              TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     UNIQUE (id, server_name)
 );

@@ -2,6 +2,23 @@ import sys
 from ConfigParser import SafeConfigParser
 
 
+class Server(object):
+    def __init__(self,
+                 hostname,
+                 root,
+                 user="root",
+                 port=22,
+                 archive_root=None):
+        self.hostname = hostname
+        self.root = root
+        self.user = user
+        self.port = port
+        self.archive_root = archive_root
+
+    def __repr__(self):
+        return repr(self.__dict__)
+
+
 def load_config(cfgfile):
     s = SafeConfigParser()
     if not s.read(cfgfile):
@@ -29,6 +46,17 @@ def load_config(cfgfile):
             for k in s.options(section)
         )
 
-        srv[opts.setdefault("name", name)] = opts
+        opts.setdefault("hostname", name)
+
+        srv[name] = Server(**opts)
 
     return conf
+
+
+def setup_environment(cfg):
+    from zope.component import getGlobalSiteManager
+    from storm.zope.zstorm import ZStorm
+    gsm = getGlobalSiteManager()
+    zs = ZStorm()
+    gsm.registerUtility(zs)
+    zs.set_default_uri("tilde", cfg["dburl"])

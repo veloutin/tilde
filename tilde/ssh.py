@@ -1,12 +1,16 @@
-import sys, os
+import sys
+import os
 import struct
 
-from zope.interface import implements
-from twisted.internet.interfaces import IStreamClientEndpoint
+from cStringIO import StringIO
 
 from twisted.python.failure import Failure
 from twisted.python.log import err
-from twisted.internet.error import ConnectionDone
+from twisted.internet.error import (
+    ProcessTerminated,
+    ProcessDone,
+    ConnectionDone,
+)
 from twisted.internet.defer import Deferred, succeed, DeferredList
 from twisted.internet.protocol import Factory, Protocol
 from twisted.internet.endpoints import TCP4ClientEndpoint
@@ -14,11 +18,52 @@ from twisted.internet.endpoints import TCP4ClientEndpoint
 from twisted.conch.ssh.common import NS, getNS
 from twisted.conch.ssh.channel import SSHChannel
 from twisted.conch.ssh.transport import SSHClientTransport
-from twisted.conch.ssh.connection import SSHConnection
+from twisted.conch.ssh.connection import SSHConnection, EXTENDED_DATA_STDERR
 from twisted.conch.client.default import SSHUserAuthClient
 from twisted.conch.client.options import ConchOptions
 
 # setDebugging(True)
+
+class RemoteCommandProtocol(Protocol):
+    """
+    Base class for protocols that execute commands remotely
+    """
+    _finished = False
+    reason = None
+
+    def commandExited(self, reason):
+        """
+        Called when the remote command terminated.
+        """
+        self._finished = True
+        self.reason = reason
+        self.finished.callback(reason)
+
+    def connectionLost(self, reason):
+        """
+        Called when the channel closes
+        """
+        if not self._finished:
+            self.finished.callback(reason)
+            self._finished = True
+            self.reason = reason
+
+class RunCommandProtocol(RemoteCommandProtocol):
+    def __init__(self):
+        self.out = StringIO()
+        self.err = StringIO()
+
+    def dataReceived(self, bytes):
+        self.out.write(bytes)
+
+    def errReceived(self, bytes):
+        self.err.write(bytes)
+
+
+class StdoutEcho(RemoteCommandProtocol):
+    def dataReceived(self, bytes):
+        sys.stdout.write(bytes)
+        sys.stdout.flush()
 
 class SSHServer(object):
     def __init__(self,
@@ -32,14 +77,14 @@ class SSHServer(object):
         self._port = port
         if user is None:
             user = os.environ['USER']
-        self._user = user
+        self.user = str(user)
         self.connection = None
 
     def connect(self):
         tcpEndpoint = TCP4ClientEndpoint(self._reactor,
                                          self._hostname,
                                          self._port)
-        factory = MyFactory()
+        factory = Factory()
         factory.server = self
         factory.protocol = SSHTransport
         factory.serverConnected = Deferred()
@@ -50,16 +95,16 @@ class SSHServer(object):
 
         return factory.serverConnected
 
-    def runCommand(self, command, protocol):
-        print "RunCommand", command
-        factory = Factory()
-        factory.protocol = protocol
-        factory.finished = Deferred()
+    def runCommand(self, command, protocol=RemoteCommandProtocol):
+        p = protocol()
+        p.finished = Deferred()
+        p.finished.addErrback(lambda reason: reason.trap(ProcessDone))
 
-        channel = _CommandChannel(command, factory)
+        channel = _CommandChannel(command, p)
         d = self.connection.requestChannel(channel)
-        d.addErrback(factory.finished.errback)
-        return factory.finished
+
+        d.addErrback(p.finished.errback)
+        return p
 
 
 class SSHTransport(SSHClientTransport):
@@ -68,19 +113,17 @@ class SSHTransport(SSHClientTransport):
     def verifyHostKey(self, hostKey, fingerprint):
         return succeed(True)
 
-
     def connectionSecure(self):
         self._secured = True
         conn = _CommandConnection(self.factory)
         userauth = SSHUserAuthClient(
-            os.environ['USER'], ConchOptions(), conn)
+            self.factory.server.user, ConchOptions(), conn)
+        userauth.preferredOrder = ['publickey']
         self.requestService(userauth)
-
 
     def connectionLost(self, reason):
         if not self._secured:
             self.factory.commandConnected.errback(reason)
-
 
 
 class _CommandConnection(SSHConnection):
@@ -91,9 +134,7 @@ class _CommandConnection(SSHConnection):
         self.factory = factory
         self._pendingChannelsDeferreds = []
 
-
     def serviceStarted(self):
-        print "Connection service started"
         SSHConnection.serviceStarted(self)
         self._ready = True
         for d, channel in self._pendingChannelsDeferreds:
@@ -116,11 +157,10 @@ class _CommandConnection(SSHConnection):
 
     def requestChannel(self, channel):
         ''' Request that a channel be opened when the service is started
-        
+
         @param channel: the C{SSHChannel} instance to open
         @return a C{Deferred}
         '''
-        print "request Channel", channel, self._ready
         if self._ready:
             self.openChannel(channel)
             return succeed(True)
@@ -131,37 +171,43 @@ class _CommandConnection(SSHConnection):
             return d
 
 
-
 class _CommandChannel(SSHChannel):
     name = 'session'
 
-    def __init__(self, command, protocolFactory):
+    def __init__(self, command, protocol):
         SSHChannel.__init__(self)
         self._command = command
-        self._protocolFactory = protocolFactory
-
+        self._protocol = protocol
 
     def channelOpen(self, ignored):
         print self, "channelOpen", id(self)
         self.conn.sendRequest(self, 'exec', NS(self._command))
-        self._protocol = self._protocolFactory.buildProtocol(None)
         self._protocol.makeConnection(self)
-
 
     def request_exit_signal(self, data):
         signame, rest = getNS(data)
         core_dumped = struct.unpack('>?', rest[0])[0]
         msg, lang, rest = getNS(rest[1:], 2)
-        print "Exit with SIG_{0}, dumped={1}, msg={2}, lang={3}".format(
-            signame, core_dumped, msg, lang)
+        self._protocol.commandExited(
+            Failure(ProcessTerminated(signal=signame, status=msg)))
 
     def request_exit_status(self, data):
         stat = struct.unpack('>L', data)[0]
-        print "Exit with status code %s" % stat
+        if stat:
+            res = ProcessTerminated(exitCode=stat)
+        else:
+            res = ProcessDone(stat)
 
+        self._protocol.commandExited(Failure(res))
 
-    def dataReceived(self, bytes):
-        self._protocol.dataReceived(bytes)
+    def dataReceived(self, data):
+        self._protocol.dataReceived(data)
+
+    def extReceived(self, type, data):
+        if type == EXTENDED_DATA_STDERR:
+            self._protocol.errReceived(data)
+        else:
+            SSHChannel.extReceived(self, type, data)
 
 
     def closed(self):
@@ -169,73 +215,38 @@ class _CommandChannel(SSHChannel):
             Failure(ConnectionDone("ssh channel closed")))
 
 
-
-
 class SSHCommandClientEndpoint(object):
-
     def __init__(self, command, sshServer):
         self._command = command
         self._sshServer = sshServer
-
 
     def connect(self, protocolFactory):
         print "SSHCommand connect, factory: ", protocolFactory
 
 
-
-class StdoutEcho(Protocol):
-    def dataReceived(self, bytes):
-        sys.stdout.write(bytes)
-        sys.stdout.flush()
-
-    def connectionMade(self):
-        print self, "connectionMade", self.transport
-
-    def connectionLost(self, reason):
-        print self, "connectionLost", reason
-        self.factory.finished.callback(reason)
-
-
-class MyFactory(Factory):
-    def __init__(self, ):
-        print "MyFactory()"
-
-    def startFactory(self):
-        print self, "started"
-
-    def stopFactory(self):
-        print self, "stopped"
-
-    def buildProtocol(self, addr):
-        print self, "buildProtocol", addr
-        return Factory.buildProtocol(self, addr)
-
-
-def copyToStdout(endpoint):
-    echoFactory = MyFactory()
-    echoFactory.protocol = StdoutEcho
-    echoFactory.finished = Deferred()
-    d = endpoint.connect(echoFactory)
-    d.addErrback(echoFactory.finished.errback)
-    return echoFactory.finished
-
-
-
 def main():
     from twisted.internet import reactor
 
-    #from twisted.python.log import startLogging
-    #startLogging(sys.stdout)
+    from twisted.python.log import startLogging
+    startLogging(sys.stdout)
     server = SSHServer(reactor, "localhost", 22)
     d = server.connect()
+
     def runCommands(server):
-        print "Server connected"
-        c1 = server.runCommand("hostname; sleep 1; hostname; sleep 3; echo NONO", StdoutEcho)
-        c2 = server.runCommand("hostname -f; sleep 2; echo YAYA", StdoutEcho)
+        p1 = server.runCommand("ls /root", RunCommandProtocol)
+        p2 = server.runCommand("whoami", RunCommandProtocol)
+        c1, c2 = p1.finished, p2.finished
         c1.addErrback(err, "ssh command/copy to stdout failed")
         c2.addErrback(err, "ssh command/copy to stdout failed")
         dl = DeferredList([c1, c2])
-        dl.addCallback(lambda ignored: reactor.stop())
+        def printResults(reslist):
+            print "p1 out:", p1.out.getvalue()
+            print "p1 err:", p1.err.getvalue()
+            print "p2 out:", p2.out.getvalue()
+            print "p2 err:", p2.err.getvalue()
+            reactor.stop()
+
+        dl.addCallback(printResults)
 
     d.addCallback(runCommands)
     reactor.run()
@@ -244,4 +255,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
