@@ -5,7 +5,7 @@ import struct
 from cStringIO import StringIO
 
 from twisted.python.failure import Failure
-from twisted.python.log import err
+from twisted.python import log
 from twisted.internet.error import (
     ProcessTerminated,
     ProcessDone,
@@ -47,6 +47,9 @@ class RemoteCommandProtocol(Protocol):
             self.finished.callback(reason)
             self._finished = True
             self.reason = reason
+
+    def errReceived(self, bytes):
+        """ Implement this to receive standard error """
 
 class RunCommandProtocol(RemoteCommandProtocol):
     def __init__(self):
@@ -176,11 +179,13 @@ class _CommandChannel(SSHChannel):
 
     def __init__(self, command, protocol):
         SSHChannel.__init__(self)
+        if isinstance(command, unicode):
+            command = command.encode('utf-8')
         self._command = command
         self._protocol = protocol
 
     def channelOpen(self, ignored):
-        print self, "channelOpen", id(self)
+        log.msg('exec ' + self._command)
         self.conn.sendRequest(self, 'exec', NS(self._command))
         self._protocol.makeConnection(self)
 
@@ -214,16 +219,6 @@ class _CommandChannel(SSHChannel):
         self._protocol.connectionLost(
             Failure(ConnectionDone("ssh channel closed")))
 
-
-class SSHCommandClientEndpoint(object):
-    def __init__(self, command, sshServer):
-        self._command = command
-        self._sshServer = sshServer
-
-    def connect(self, protocolFactory):
-        print "SSHCommand connect, factory: ", protocolFactory
-
-
 def main():
     from twisted.internet import reactor
 
@@ -236,8 +231,8 @@ def main():
         p1 = server.runCommand("ls /root", RunCommandProtocol)
         p2 = server.runCommand("whoami", RunCommandProtocol)
         c1, c2 = p1.finished, p2.finished
-        c1.addErrback(err, "ssh command/copy to stdout failed")
-        c2.addErrback(err, "ssh command/copy to stdout failed")
+        c1.addErrback(log.err, "ssh command/copy to stdout failed")
+        c2.addErrback(log.err, "ssh command/copy to stdout failed")
         dl = DeferredList([c1, c2])
         def printResults(reslist):
             print "p1 out:", p1.out.getvalue()

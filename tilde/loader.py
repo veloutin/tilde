@@ -8,12 +8,14 @@ class Server(object):
                  root,
                  user="root",
                  port=22,
-                 archive_root=None):
+                 archive_root=None,
+                 trash_root=None):
         self.hostname = hostname
         self.root = root
         self.user = user
         self.port = port
         self.archive_root = archive_root
+        self.trash_root = trash_root
 
     def __repr__(self):
         return repr(self.__dict__)

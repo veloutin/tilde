@@ -1,8 +1,5 @@
 from __future__ import unicode_literals
 
-import logging
-mlog = logging.getLogger(__name__)
-
 import itertools
 import operator
 
@@ -11,92 +8,15 @@ from zope.component import getUtility
 from storm.zope.zstorm import IZStorm
 from storm.twisted.transact import Transactor, transact
 from storm.expr import LeftJoin, Desc
+from storm.store import get_obj_info
 
 from twisted.internet import defer
 from twisted.python.threadpool import ThreadPool
-
-
+from twisted.python.failure import Failure
 
 from tilde.models import Home, HomeState
-from tilde.core import ShareUpdater
-
 from tilde.core import ServerManager
 
-def run(dburl, server, share_root, archive_root):
-    mlog.debug("Connecting to {0}".format(dburl))
-    store = Store(create_database(dburl))
-
-    mlog.debug("Setting up updater: {0}"
-               .format(", ".join([
-                   server,
-                   share_root,
-                   archive_root or "<none>"
-               ])))
-    updater = ShareUpdater(server, share_root, archive_root)
-
-    requested = store.using(
-        Home,
-        LeftJoin(
-            HomeState,
-            Home.id == HomeState.id,
-        )
-    ).find((Home, HomeState), Home.server_name == server)
-
-    inactive = store.find(
-        (Home, HomeState),
-        Home.id == HomeState.id,
-        Home.server_name != server,
-        HomeState.server_name == server,
-    )
-
-    mlog.info("Found {0} shares to update".format(requested.count()))
-
-    for home, state in requested:
-        mlog.debug("Updating {0} ({1})".format(home, state))
-        if state is None:
-            state = HomeState()
-            state.home = home
-
-        try:
-            updater.update(home, state)
-            mlog.debug("- State is now {0}".format(state))
-        except Exception:
-            mlog.exception("Failed to update home: {0}".format(home))
-            store.reload(home)
-            if Store.of(state) is store:
-                store.reload(state)
-            store.rollback()
-            continue
-
-        try:
-            if Store.of(state) is None:
-                store.add(state)
-            store.commit()
-        except Exception:
-            store.rollback()
-            mlog.exception("Failed to commit changes")
-
-    mlog.info("Found {0} shares to remove".format(inactive.count()))
-    for home, state in inactive:
-        mlog.debug("Deactivating {0} ({1})".format(home, state))
-        try:
-            updater.update(home, state)
-            mlog.debug("- State is now {0}".format(state))
-        except Exception:
-            store.reload(home)
-            store.reload(state)
-            mlog.exception("Failed to update home: {0}".format(home))
-            store.rollback()
-            continue
-
-        try:
-            #Inactive should mean old state gets flushed
-            if state.path is None:
-                store.remove(state)
-            store.commit()
-        except Exception:
-            store.rollback()
-            mlog.exception("Failed to commit changes")
 
 
 class Updater(object):
@@ -141,26 +61,111 @@ class Updater(object):
         else:
             zs.add(HomeState.fromState(homestate))
 
+    @transact
+    def refreshState(self, homestate):
+        zs = getUtility(IZStorm).get("tilde")
+        hs = zs.get(HomeState, (homestate.id, homestate.server_name))
+        return hs
+
+    @transact
+    def findState(self, *condition):
+        zs = getUtility(IZStorm).get("tilde")
+        return list(zs.find(HomeState, *condition))
+
     def create(self, home):
+        res = defer.Deferred()
         print "creating home", home
-        self.updateState(HomeState.fromHome(home,
-                                            server=home.server_name,
-                                            path=home.path))
-        return defer.succeed(True)
+        def _success(res):
+            if res:
+                return self.updateState(HomeState.fromHome(home,
+                                                    server=home.server_name,
+                                                    path=home.path))
+            else:
+                return Failure(Exception("Failed to create home"))
+
+        server = self.serverManager.getServer(home.server_name)
+        server.addCallback(lambda updater: updater.create_home(home))
+        server.addCallback(_success)
+        server.chainDeferred(res)
+        return res
 
     def migrate(self, home, fromState):
-        print "migrating", home, fromState, home.server_name
-        self.updateState(HomeState.fromHome(home,
-                                            server=home.server_name,
-                                            path=home.path))
-        self.deleteState(fromState)
-        return defer.succeed(True)
+        res = defer.Deferred()
+        print "migrating", home, "from", fromState, "to"
+        def _done(res):
+            d1 = self.updateState(HomeState.fromHome(home,
+                                                server=home.server_name,
+                                                path=home.path))
+            d1.addCallback(lambda *a: self.deleteState(fromState))
+            return d1
+
+
+        src = self.serverManager.getServer(fromState.server_name)
+        dst = self.serverManager.getServer(home.server_name)
+        dl = defer.DeferredList([src, dst], fireOnOneErrback=True)
+        dl.addCallback(self._migration_start, home, fromState)
+        dl.addCallback(_done)
+        dl.chainDeferred(res)
+        return res
+
+    def _migration_start(self, reslist, home, fromState):
+        (res1, source), (res2, dest) = reslist
+        if not res1 or not res2:
+            return Failure(Exception("Unable to get both servers"))
+
+
+        sync1 = source.sync(fromState=fromState, to=dest, home=home)
+        if fromState.status == HomeState.ACTIVE:
+            # Active homes need to be archived then re-synced
+            sync1.addCallback(lambda res: self.archive(fromState))
+            sync1.addCallback(lambda res: self.refreshState(fromState))
+            def _resync(newstate):
+                if newstate:
+                    return source.sync(fromState=newstate,
+                                       to=dest,
+                                       home=home)
+            sync1.addCallback(_resync)
+
+        return sync1
+
+    @defer.inlineCallbacks
+    def _find_free_path(self, server, path, status):
+        newpath = path
+        suffix = 0
+        while suffix < 10:
+            existing = yield self.findState(
+                HomeState.status == status,
+                HomeState.path == newpath,
+                HomeState.server_name == server)
+
+            if not existing:
+                defer.returnValue(newpath)  # This breaks and returns
+
+            suffix += 1
+            newpath = path + u"-{0}".format(suffix)
+        else:
+            raise Exception("Unable to find free archive path")
+
 
     def archive(self, homestate):
         print "Archiving", homestate
-        homestate.status = HomeState.ARCHIVED
-        self.updateState(homestate)
-        return defer.succeed(True)
+        d = self.serverManager.getServer(homestate.server_name)
+        get_path = self._find_free_path(homestate.server_name,
+                                        homestate.path,
+                                        HomeState.ARCHIVED)
+
+        res = defer.gatherResults([get_path, d])
+        def _done((newpath, server)):
+            ark = server.archive(homestate, newpath)
+            ark.addCallback(
+                lambda res: self.updateState(
+                    HomeState.fromState(homestate,
+                                        status=HomeState.ARCHIVED,
+                                        path=newpath)))
+            return ark
+
+        res.addCallback(_done)
+        return res
 
     def remove(self, homestate):
         print "Clearing up the homestate", homestate
@@ -212,7 +217,7 @@ if __name__ == '__main__':
 
     def _s():
         tp.start()
-        tx = Updater(Transactor(tp), None)
+        tx = Updater(Transactor(tp), ServerManager(reactor, cfg["servers"]))
         servers = tx.listSharesToUpdate()
         def p(res):
             updates = [tx.updateOne(*r) for r in res]

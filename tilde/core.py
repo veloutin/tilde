@@ -4,11 +4,11 @@ import shutil
 import os
 import pwd, grp
 
-
-from tilde.ssh import SSHServer, RunCommandProtocol
-
 from twisted.internet import defer
 from twisted.internet.error import ProcessTerminated
+
+from tilde import models
+from tilde.ssh import SSHServer, RunCommandProtocol
 
 
 class ServerManager(object):
@@ -62,9 +62,11 @@ class ServerManager(object):
 class ShareUpdater(object):
     CMD_STAT = "/usr/bin/stat"
     CMD_TEST = "/usr/bin/test"
-    CMD_MKDIR = "/usr/bin/mkdir"
-    CMD_CHOWN = "/usr/bin/chown"
-    CMD_CHMOD = "/usr/bin/chmod"
+    CMD_MKDIR = "/bin/mkdir"
+    CMD_CHOWN = "/bin/chown"
+    CMD_CHMOD = "/bin/chmod"
+    CMD_RSYNC = "/usr/bin/rsync"
+    CMD_MOVE = "/bin/mv"
 
     DEF_MODE = 0700
     def __init__(self, server, cfg):
@@ -72,6 +74,7 @@ class ShareUpdater(object):
         self.name = cfg.hostname
         self.root = cfg.root
         self.archive_root = cfg.archive_root
+        self.trash_root = cfg.trash_root
 
     def __repr__(self):
         return "<ShareUpdater for {0}>".format(self.name)
@@ -83,49 +86,6 @@ class ShareUpdater(object):
         shareabs = os.path.abspath(homepath)[1:]
         realpath = os.path.join(base, shareabs)
         return realpath
-
-
-    def uid_to_name(self, uid=None):
-        if uid is None:
-            uid = os.getuid()
-        return pwd.getpwuid(uid).pw_name
-
-    def gid_to_name(self, gid=None):
-        if gid is None:
-            gid = os.getgid()
-        return grp.getgrgid(gid).gr_nam
-
-    def name_to_uid(self, name):
-        return pwd.getpwnam(name).pw_uid
-
-    def name_to_gid(self, name):
-        return grp.getgrnam(name).gr_gid
-
-    def get_user(self, path):
-        return self.uid_to_name(os.stat(path).st_uid)
-
-    def get_group(self, path):
-        return self.gid_to_name(os.stat(path).st_gid)
-
-    def update(self, home, state):
-        if home.server_name != state.server_name:
-            if home.server_name == self.server:
-                mlog.debug("req create")
-                self.create(home, state)
-            elif state.server_name == self.server:
-                mlog.debug("req remove")
-                self.remove(home, state)
-                return
-
-        if home.server_name != self.server:
-            mlog.debug(u"bad server {0} != {1}"
-                       .format(home.server_name, self.server))
-            return
-
-        if home.path != state.path:
-            self.move(home, state)
-
-        self.set_perms(home, state)
 
     def exists(self, path):
         d = defer.Deferred()
@@ -164,6 +124,13 @@ class ShareUpdater(object):
         cmd.finished.chainDeferred(d)
         return d
 
+    def _make_parent(self, path):
+        parent = os.path.split(os.path.normpath(path))[0]
+        return self.server.runCommand(
+            " ".join([self.CMD_MKDIR, "-p", parent])
+        ).finished
+
+
     def create_home(self, home):
         d = defer.Deferred()
         realpath = self.get_real_path(home.path)
@@ -176,8 +143,8 @@ class ShareUpdater(object):
             cmd.extend(["&&",
                         self.CMD_CHOWN,
                         "{0}:{1}".format(
-                            home.owner.encode("utf-8"),
-                            (home.group or u'').encode("utf-8")),
+                            home.owner,
+                            (home.group or '')),
                         realpath])
 
         cmd.extend(["&&",
@@ -185,7 +152,7 @@ class ShareUpdater(object):
                     str_mod,
                     realpath])
 
-        cmd = self.server.runCommand(cmd)
+        cmd = self.server.runCommand(" ".join(cmd))
 
         def _success(reason):
             return True
@@ -198,15 +165,47 @@ class ShareUpdater(object):
         cmd.finished.chainDeferred(d)
         return d
 
-    def move(self, home, state):
-        old = self.get_real_path(state.path)
-        new = self.get_real_path(home.path)
-        mlog.info(u"Moving {0} to {1}".format(old, new))
-        parent = os.path.split(new)[0]
-        if not os.path.exists(parent):
-            os.makedirs(parent)
-        shutil.move(old, new)
-        state.path = home.path
+    def sync(self, fromState, to, home, bwlimit=None):
+        if fromState.status == models.HomeState.ACTIVE:
+            src_base = self.root
+        else:
+            src_base = self.archive_root
+
+        sourcepath = self.get_real_path(fromState.path, src_base)
+        to_path = to.get_real_path(home.path)
+
+        cmd = [self.CMD_RSYNC, "-rlptgo"]
+        if bwlimit:
+            cmd.append("--bwlimit={0}".format(bwlimit))
+
+        dest = ":".join([to.name, to_path])
+        # Trailing slash on source to prevent copying dir inside itself
+        cmd.extend([sourcepath + "/", dest])
+
+        d = self._make_parent(to_path)
+        def _then(*r):
+            return self.server.runCommand(" ".join(cmd)).finished
+        d.addBoth(_then)
+        return d
+
+    def archive(self, homestate, toPath):
+        if homestate.status != models.HomeState.ACTIVE:
+            return defer.fail(Exception("Home must be active to archive"))
+
+        src = self.get_real_path(homestate.path, self.root)
+        dst = self.get_real_path(toPath, self.archive_root)
+        return self._make_parent(dst).addCallback(lambda *r: self.move(src, dst))
+
+    def move(self, source, dest):
+        args = [self.CMD_MOVE, "-T", "--backup=t", source, dest]
+        cmd = self.server.runCommand(" ".join(args))
+
+
+
+        return cmd.finished
+
+
+
 
     def remove(self, home, state):
         realpath = self.get_real_path(home.path)
@@ -236,24 +235,3 @@ class ShareUpdater(object):
 
         state.path = None
 
-    def set_perms(self, home, state):
-        realpath = self.get_real_path(home.path)
-        if not os.path.exists(realpath):
-            self.create(home, state)
-
-        if home.owner:
-            setuid = home.owner
-            numuid = self.name_to_uid(setuid)
-        else:
-            setuid = None
-            numuid = -1
-
-        if home.group:
-            setgid = home.group
-            numgid = self.name_to_gid(setgid)
-        else:
-            setgid = None
-            numgid = -1
-
-        if setuid or setuid:
-            os.chown(realpath, numuid, numgid)

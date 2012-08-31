@@ -90,9 +90,11 @@ class HomeState(Storm):
         self.ts = other.ts
 
     @classmethod
-    def fromState(cls, other):
+    def fromState(cls, other, **kw):
         new = cls()
         new.update(other)
+        for k, v in kw.iteritems():
+            setattr(new, k, v)
         return new
 
     @classmethod
