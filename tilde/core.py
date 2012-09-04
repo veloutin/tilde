@@ -1,8 +1,4 @@
-import logging
-mlog = logging.getLogger(__name__)
-import shutil
 import os
-import pwd, grp
 
 from twisted.internet import defer
 from twisted.internet.error import ProcessTerminated

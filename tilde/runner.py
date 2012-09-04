@@ -8,11 +8,11 @@ from zope.component import getUtility
 from storm.zope.zstorm import IZStorm
 from storm.twisted.transact import Transactor, transact
 from storm.expr import LeftJoin, Desc
-from storm.store import get_obj_info
 
 from twisted.internet import defer
 from twisted.python.threadpool import ThreadPool
 from twisted.python.failure import Failure
+from twisted.python import log
 
 from tilde.models import Home, HomeState
 from tilde.core import ServerManager
@@ -38,11 +38,11 @@ class Updater(object):
                     .order_by(Home.id, Desc(HomeState.ts)),
                 operator.itemgetter(0)):
 
-            status = [s for h,s in status if s is not None]
+            status = [s.copy() for h,s in status if s is not None]
             if ((len(status) > 1) or
                 (home.active and not status) or
                 (status and not home.match(status[0]))):
-                yield home, status
+                yield home.copy(), status
 
     @transact
     def deleteState(self, homestate):
@@ -65,12 +65,13 @@ class Updater(object):
     def refreshState(self, homestate):
         zs = getUtility(IZStorm).get("tilde")
         hs = zs.get(HomeState, (homestate.id, homestate.server_name))
-        return hs
+        return hs.copy()
 
     @transact
     def findState(self, *condition):
         zs = getUtility(IZStorm).get("tilde")
-        return list(zs.find(HomeState, *condition))
+        res = zs.find(HomeState, *condition)
+        return [s.copy() for s in res]
 
     def create(self, home):
         res = defer.Deferred()
@@ -172,38 +173,39 @@ class Updater(object):
         self.deleteState(homestate)
         return defer.succeed(True)
 
+
+    def _update(self, res, home, source=None):
+        log.msg("Updating {0} with {1}".format(home, source))
+        if home.active:
+            if source:
+                return self.migrate(home, source)
+            else:
+                return self.create(home)
+        else:
+            if source and source.status == HomeState.ACTIVE:
+                return self.archive(source)
+            else:
+                return defer.succeed("Nothing to do, already archived")
+
     def updateOne(self, home, status):
-        res = defer.Deferred()
         source = next(
             itertools.chain(
                 (s for s in status if s.status == HomeState.ACTIVE),
                 (s for s in status if s.status == HomeState.ARCHIVED),
             ),
             None)
-        if home.active:
-            if source:
-                ops = [self.remove(s) for s in status if s is not source]
-                cleanup = defer.DeferredList(ops)
-                def _cleanupDone(*i):
-                    if not home.match(source):
-                        self.migrate(home, source).chainDeferred(res)
-                    else:
-                        defer.succeed("Nothing else to do").chainDeferred(res)
-                cleanup.addCallbacks(_cleanupDone, res.errback)
-            else:
-                self.create(home).chainDeferred(res)
 
+        if source:
+            to_clean = [s for s in status if s is not source]
+            log.msg("Multiple statuses found, cleaning them: {0}"
+                    .format(to_clean))
+            ops = [self.remove(s) for s in to_clean]
+            clean = defer.DeferredList(ops)
         else:
-            if source:
-                ops = [self.remove(s) for s in status if s is not source]
-                cleanup = defer.DeferredList(ops)
-                def _done(*i):
-                    self.archive(source).chainDeferred(res)
-                cleanup.addCallbacks(_done, res.errback)
-            else:
-                defer.succeed("Nothing to do").chainDeferred(res)
+            clean = defer.succeed("No cleanup required")
 
-        return res
+        clean.addCallback(self._update, home, source)
+        return clean
 
 if __name__ == '__main__':
     from twisted.internet import reactor

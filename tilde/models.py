@@ -56,6 +56,17 @@ class Home(Storm):
         else:
             return "active" != status.status
 
+    def copy(self):
+        h = Home()
+        h.id = self.id
+        h.path = self.path
+        h.server_name = self.server_name
+        h.owner = self.owner
+        h.group = self.group
+        h.uuid = self.uuid
+        h.ts = self.ts
+        return h
+
 
 
 class HomeState(Storm):
@@ -81,6 +92,9 @@ class HomeState(Storm):
             self.path,
             self.server_name,
         )
+
+    def copy(self):
+        return self.fromState(self)
 
     def update(self, other):
         self.id = other.id
