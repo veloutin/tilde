@@ -217,3 +217,39 @@ class UpdateTest(unittest.TestCase):
         self.assertEquals(newstate.status, HomeState.ACTIVE)
         self.assertEquals(newstate.server_name, "bar")
 
+
+    @defer.inlineCallbacks
+    def test_clean_others(self):
+        home = self._H(
+            server_name="bar",
+            path="/bar",
+        )
+
+        s1 = self._S(
+            id=home.id,
+            server_name="bar",
+            path="/bar",
+            status=HomeState.ACTIVE,
+        )
+
+        s2 = self._S(
+            id=home.id,
+            server_name="foo",
+            path="/bar",
+            status=HomeState.ACTIVE,
+        )
+
+        fooserv = yield self.sm.getServer("foo")
+        barserv = yield self.sm.getServer("bar")
+
+        fooserv.known_paths.add("/data/homes/bar")
+        barserv.known_paths.add("/data/homes/bar")
+
+        done = yield self.updater.updateOne(home, [s1, s2])
+
+        self.assertIn("/data/homes/bar", barserv.known_paths)
+        self.assertNotIn("/data/homes/bar", fooserv.known_paths)
+
+        self.assertIn((home.id, "bar"), self.db.objects[HomeState])
+        self.assertNotIn((home.id, "foo"), self.db.objects[HomeState])
+

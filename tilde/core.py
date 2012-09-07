@@ -81,6 +81,8 @@ class ShareUpdater(object):
         self.root = cfg.root
         self.archive_root = cfg.archive_root
         self.trash_root = cfg.trash_root
+        if self.trash_root is None:
+            self.trash_root = os.path.join(self.archive_root, ".tilde_trash")
 
     def __repr__(self):
         return "<ShareUpdater for {0}>".format(self.name)
