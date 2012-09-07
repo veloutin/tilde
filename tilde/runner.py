@@ -10,6 +10,7 @@ from storm.twisted.transact import Transactor, transact
 from storm.expr import LeftJoin, Desc
 
 from twisted.internet import defer
+from twisted.internet import task
 from twisted.python.threadpool import ThreadPool
 from twisted.python.failure import Failure
 from twisted.python import log
@@ -75,12 +76,10 @@ class Updater(object):
 
     def create(self, home):
         res = defer.Deferred()
-        print "creating home", home
+        log.msg("creating home {0}".format(home))
         def _success(res):
             if res:
-                return self.updateState(HomeState.fromHome(home,
-                                                    server=home.server_name,
-                                                    path=home.path))
+                return self.updateState(HomeState.fromHome(home))
             else:
                 return Failure(Exception("Failed to create home"))
 
@@ -92,21 +91,33 @@ class Updater(object):
 
     def migrate(self, home, fromState):
         res = defer.Deferred()
-        print "migrating", home, "from", fromState, "to"
+        src = self.serverManager.getServer(fromState.server_name)
+
+        if home.server_name == fromState.server_name:
+            log.msg("moving {0} locally".format(home))
+            src.addCallback(self._move_local, home, fromState)
+            return src
+
+        log.msg("migrating {0} from {1}".format(home, fromState))
+
         def _done(res):
-            d1 = self.updateState(HomeState.fromHome(home,
-                                                server=home.server_name,
-                                                path=home.path))
+            d1 = self.updateState(HomeState.fromHome(home))
             d1.addCallback(lambda *a: self.deleteState(fromState))
             return d1
 
 
-        src = self.serverManager.getServer(fromState.server_name)
         dst = self.serverManager.getServer(home.server_name)
         dl = defer.DeferredList([src, dst], fireOnOneErrback=True)
         dl.addCallback(self._migration_start, home, fromState)
         dl.addCallback(_done)
         dl.chainDeferred(res)
+        return res
+
+    def _move_local(self, server, home, fromState):
+        def _done(res):
+            return self.updateState(HomeState.fromHome(home))
+        res = server.move(fromState, home.path)
+        res.addCallback(_done)
         return res
 
     def _migration_start(self, reslist, home, fromState):
@@ -149,7 +160,7 @@ class Updater(object):
 
 
     def archive(self, homestate):
-        print "Archiving", homestate
+        log.msg("Archiving {0}".format(homestate))
         d = self.serverManager.getServer(homestate.server_name)
         get_path = self._find_free_path(homestate.server_name,
                                         homestate.path,
@@ -169,9 +180,11 @@ class Updater(object):
         return res
 
     def remove(self, homestate):
-        print "Clearing up the homestate", homestate
-        self.deleteState(homestate)
-        return defer.succeed(True)
+        log.msg("Clearing up the homestate {0}".format(homestate))
+        res = self.serverManager.getServer(homestate.server_name)
+        res.addCallback(lambda server: server.remove(homestate))
+        res.addCallback(lambda res: self.deleteState(homestate))
+        return res
 
 
     def _update(self, res, home, source=None):
@@ -195,43 +208,44 @@ class Updater(object):
             ),
             None)
 
+        clean = defer.succeed("No cleanup required")
         if source:
             to_clean = [s for s in status if s is not source]
-            log.msg("Multiple statuses found, cleaning them: {0}"
-                    .format(to_clean))
-            ops = [self.remove(s) for s in to_clean]
-            clean = defer.DeferredList(ops)
-        else:
-            clean = defer.succeed("No cleanup required")
+            if to_clean:
+                log.msg("Multiple statuses found, cleaning them: {0}"
+                        .format(to_clean))
+                ops = [self.remove(s) for s in to_clean]
+                clean = defer.DeferredList(ops)
 
         clean.addCallback(self._update, home, source)
         return clean
 
-if __name__ == '__main__':
-    from twisted.internet import reactor
-    from tilde.loader import load_config, setup_environment
-    from twisted.python.log import startLogging
-    import sys
-    startLogging(sys.stdout)
-    cfg = load_config("etc/tilde.ini")
-    setup_environment(cfg)
+def run(config, reactor=None):
+    if reactor is None:
+        from twisted.internet import reactor
+
     tp = ThreadPool(0, 5)
-
-    def _s():
-        tp.start()
-        tx = Updater(Transactor(tp), ServerManager(reactor, cfg["servers"]))
-        servers = tx.listSharesToUpdate()
-        def p(res):
-            updates = [tx.updateOne(*r) for r in res]
-            dl = defer.DeferredList(updates)
-            def _done(*r):
-                tp.stop()
-                reactor.stop()
-            dl.addBoth(_done)
-
-        servers.addCallback(p)
-
-    reactor.callWhenRunning(_s)
+    tp.start()
+    sm = ServerManager(reactor, config["servers"])
     trigId = reactor.addSystemEventTrigger("before", "shutdown", tp.stop)
-    reactor.run()
-    
+    tx = Updater(Transactor(tp), sm)
+
+    servers = tx.listSharesToUpdate()
+    def p(res):
+        work = (tx.updateOne(*r) for r in res)
+        numworkers = int(config.get("workers", 10)) or 1
+        workers = [task.cooperate(work).whenDone()
+                   for i in xrange(numworkers)]
+
+        dl = defer.DeferredList(workers)
+        return dl
+    servers.addCallback(p)
+
+    def _done(res):
+        log.msg('Done updating')
+        sm.loseConnections()
+        tp.stop()
+        return res
+    servers.addBoth(_done)
+
+    return servers

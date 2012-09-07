@@ -62,3 +62,4 @@ def setup_environment(cfg):
     zs = ZStorm()
     gsm.registerUtility(zs)
     zs.set_default_uri("tilde", cfg["dburl"])
+    return cfg

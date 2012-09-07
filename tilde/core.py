@@ -37,8 +37,11 @@ class ServerManager(object):
         )
         return d
 
+    def _makeUpdater(self, server, config):
+        return ShareUpdater(server, config)
+
     def _openCb(self, server, name, config):
-        su = ShareUpdater(server, config)
+        su = self._makeUpdater(server, config)
 
         self.servers[name] = su
         for d in self._deferreds.pop(name, []):
@@ -53,6 +56,13 @@ class ServerManager(object):
                       hostname=config.hostname,
                       port=config.port,
                       user=config.user).connect()
+
+    def loseConnections(self):
+        while self.servers:
+            key, su = self.servers.popitem()
+            for d in self._deferreds.pop(key, []):
+                d.cancel()
+            su.server.connection.loseConnection()
 
 
 class ShareUpdater(object):
@@ -178,7 +188,7 @@ class ShareUpdater(object):
         # Trailing slash on source to prevent copying dir inside itself
         cmd.extend([sourcepath + "/", dest])
 
-        d = self._make_parent(to_path)
+        d = to._make_parent(to_path)
         def _then(*r):
             return self.server.runCommand(" ".join(cmd)).finished
         d.addBoth(_then)
@@ -190,44 +200,29 @@ class ShareUpdater(object):
 
         src = self.get_real_path(homestate.path, self.root)
         dst = self.get_real_path(toPath, self.archive_root)
-        return self._make_parent(dst).addCallback(lambda *r: self.move(src, dst))
+        return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))
 
-    def move(self, source, dest):
+    def move(self, homestate, toPath):
+        if homestate.status == models.HomeState.ACTIVE:
+            src_dir = self.root
+        else:
+            src_dir = self.archive_root
+
+        src = self.get_real_path(homestate.path, src_dir)
+        dst = self.get_real_path(toPath)
+        return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))
+
+    def _move(self, source, dest):
         args = [self.CMD_MOVE, "-T", "--backup=t", source, dest]
         cmd = self.server.runCommand(" ".join(args))
-
-
-
         return cmd.finished
 
 
-
-
-    def remove(self, home, state):
-        realpath = self.get_real_path(home.path)
-        if os.path.exists(realpath):
-            if self.archive_root:
-                #Archive all the things!!!!
-                archive_path = self.get_real_path(home.path, self.archive_root)
-                mlog.info(u"Archiving {0} to {1}".format(
-                    realpath, archive_path))
-                parent = os.path.split(archive_path)[0]
-                if not os.path.exists(parent):
-                    os.makedirs(parent)
-
-                suffix = None
-                orig_ark = archive_path
-                while os.path.exists(archive_path):
-                    suffix = suffix + 1 if suffix else 1
-                    archive_path = u"{0}{1}".format(orig_ark, suffix)
-
-                shutil.move(realpath, archive_path)
-
-            else:
-                shutil.rmtree(realpath)
-
+    def remove(self, homestate):
+        if homestate.status == models.HomeState.ACTIVE:
+            src = self.get_real_path(homestate.path, self.root)
         else:
-            mlog.debug(u"Path does not exist: {0}".format(realpath))
+            src = self.get_real_path(homestate.path, self.archive_root)
 
-        state.path = None
-
+        dst = self.get_real_path(homestate.path, self.trash_root)
+        return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))

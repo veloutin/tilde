@@ -112,11 +112,11 @@ class HomeState(Storm):
         return new
 
     @classmethod
-    def fromHome(cls, home, server, path, status=ACTIVE, ts=None):
+    def fromHome(cls, home, status=ACTIVE, ts=None):
         new = cls()
         new.id = home.id
-        new.server_name = server
-        new.path = path
+        new.server_name = home.server_name
+        new.path = home.path
         new.status = status
         if ts is None:
             ts = datetime.now().replace(tzinfo=tz.tzlocal())

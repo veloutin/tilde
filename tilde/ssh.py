@@ -173,6 +173,11 @@ class _CommandConnection(SSHConnection):
             self._pendingChannelsDeferreds.append((d, channel))
             return d
 
+    def loseConnection(self):
+        for channel in self.channels.itervalues():
+            channel.close()
+        self.transport.loseConnection()
+
 
 class _CommandChannel(SSHChannel):
     name = 'session'
