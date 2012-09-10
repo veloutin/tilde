@@ -1,6 +1,7 @@
 import sys
 from ConfigParser import SafeConfigParser
 
+from twisted.python import log
 
 class Server(object):
     def __init__(self,
@@ -57,8 +58,18 @@ def load_config(cfgfile):
 
 def setup_environment(cfg):
     from zope.component import getGlobalSiteManager
-    from storm.zope.zstorm import ZStorm
+    from storm.zope.zstorm import ZStorm, IZStorm
     gsm = getGlobalSiteManager()
+    ex = gsm.queryUtility(IZStorm)
+    if ex:
+        for name, store in ex.iterstores():
+            ex.remove(store)
+            try:
+                store.close()
+            except Exception:
+                log.err("Failed to close a store")
+        gsm.unregisterUtility(ex)
+
     zs = ZStorm()
     gsm.registerUtility(zs)
     zs.set_default_uri("tilde", cfg["dburl"])
