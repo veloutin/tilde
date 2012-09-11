@@ -136,6 +136,8 @@ class MockShareUpdater(core.ShareUpdater):
 
         sourcepath = self.get_real_path(fromState.path, src_base)
         to_path = to.get_real_path(home.path)
+        log.msg("[{0.name}] SYNC {1!r} -> {2!r} [{3.name}]"
+                .format(self, sourcepath, to_path, to))
 
         d = to._make_parent(to_path)
         def _then(*r):

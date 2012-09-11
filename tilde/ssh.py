@@ -175,7 +175,7 @@ class _CommandConnection(SSHConnection):
 
     def loseConnection(self):
         for channel in self.channels.itervalues():
-            channel.close()
+            channel.loseConnection()
         self.transport.loseConnection()
 
 
@@ -219,10 +219,6 @@ class _CommandChannel(SSHChannel):
         else:
             SSHChannel.extReceived(self, type, data)
 
-
-    def closed(self):
-        self._protocol.connectionLost(
-            Failure(ConnectionDone("ssh channel closed")))
 
 def main():
     from twisted.internet import reactor

@@ -5,8 +5,6 @@ from twisted.internet import reactor, defer
 from twisted.python.threadpool import ThreadPool
 from storm.twisted.transact import Transactor
 
-import os
-
 from zope.component import getGlobalSiteManager
 GSM = getGlobalSiteManager()
 

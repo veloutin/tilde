@@ -1,5 +1,7 @@
 import os
 
+from twisted.python import log
+
 from twisted.internet import defer
 from twisted.internet.error import ProcessTerminated
 
@@ -216,7 +218,14 @@ class ShareUpdater(object):
 
     def _move(self, source, dest):
         args = [self.CMD_MOVE, "-T", "--backup=t", source, dest]
-        cmd = self.server.runCommand(" ".join(args))
+        cmd = self.server.runCommand(" ".join(args),
+                                     protocol=RunCommandProtocol)
+        def _failed(reason):
+            log.err(
+                "Failed with output: {0} {1}".format(
+                    cmd.out.getvalue(), cmd.err.getvalue()),
+                reason)
+        cmd.finished.addErrback(_failed)
         return cmd.finished
 
 

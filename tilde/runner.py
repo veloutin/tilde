@@ -102,7 +102,8 @@ class Updater(object):
 
         def _done(res):
             d1 = self.updateState(HomeState.fromHome(home))
-            d1.addCallback(lambda *a: self.deleteState(fromState))
+            d1.addCallback(lambda res: self.refreshState(fromState))
+            d1.addCallback(lambda newState: self.remove(newState))
             return d1
 
 

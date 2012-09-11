@@ -88,9 +88,10 @@ class HomeState(Storm):
         return repr(unicode(self))[2:-1]
 
     def __unicode__(self):
-        return "<HomeState: {0} on {1})>".format(
+        return "<HomeState: {0} on {1} [{2}])>".format(
             self.path,
             self.server_name,
+            self.status,
         )
 
     def copy(self):

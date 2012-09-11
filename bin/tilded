@@ -11,23 +11,24 @@ from tilde import runner, loader
 opt = optparse.OptionParser()
 opt.set_default("loglevel", logging.WARN)
 opt.add_option("-c", "--config", dest="cfgfile", default="/etc/tilde/tilde.ini")
-opt.add_option("-v", action="store_const", dest="loglevel", const=logging.INFO)
-opt.add_option("-d", action="store_const", dest="loglevel", const=logging.DEBUG)
-opt.add_option("-q", action="store_const", dest="loglevel", const=logging.ERROR)
-opt.add_option("-i", type=int, dest="interval", default=0)
+
+opt.add_option("-v", action="store_const", dest="loglevel",
+               const=logging.INFO, help="verbose output")
+opt.add_option("-d", action="store_const", dest="loglevel",
+               const=logging.DEBUG, help="debug output")
+opt.add_option("-q", action="store_const", dest="loglevel",
+               const=logging.ERROR, help="quiet")
+
+opt.add_option("-i", type=int, dest="interval", default=0,
+              help="Run every INTERVAL seconds")
 opt.add_option("--pdb", action="store_true", dest="pdb")
 
 
 opts, args = opt.parse_args()
 logging.basicConfig(level=opts.loglevel)
-
-def do_run(cfg):
-    for srv in cfg['servers'].values():
-        runner.run(cfg['dburl'],
-                   srv['name'],
-                   srv['root'],
-                   srv.get('archive_root')
-                  )
+from twisted.python import log
+obs = log.PythonLoggingObserver()
+obs.start()
 
 def handle_interrupt(f):
     f.trap(KeyboardInterrupt)
@@ -44,9 +45,10 @@ def debug(f):
     pdb.post_mortem(f.getTracebackObject())
     raise f
 
-def make_a_run(err=None):
+def make_a_run(reactor, err=None):
     cfg = task.deferLater(reactor, 0, loader.load_config, opts.cfgfile)
-    cfg.addCallback(do_run)
+    cfg.addCallback(loader.setup_environment)
+    cfg.addCallback(runner.run, reactor)
     if opts.pdb:
         cfg.addErrback(debug)
     if err:
@@ -54,11 +56,11 @@ def make_a_run(err=None):
     return cfg
 
 if not opts.interval:
-    run = make_a_run()
+    run = make_a_run(reactor)
 else:
     def log_and_continue(err):
         logging.error("Failed with error: %s", err.value)
-    loop = task.LoopingCall(make_a_run, log_and_continue)
+    loop = task.LoopingCall(make_a_run, reactor, log_and_continue)
     run = loop.start(opts.interval)
 
 run.addErrback(handle_interrupt)
