@@ -1,5 +1,7 @@
 from __future__ import unicode_literals
 
+from twisted.python import log
+
 from twisted.trial import unittest
 from twisted.internet import reactor, defer
 from twisted.python.threadpool import ThreadPool
@@ -251,3 +253,49 @@ class UpdateTest(unittest.TestCase):
         self.assertIn((home.id, "bar"), self.db.objects[HomeState])
         self.assertNotIn((home.id, "foo"), self.db.objects[HomeState])
 
+
+    @defer.inlineCallbacks
+    def test_unknown_server_home(self):
+        home = self._H(
+            server_name="baz",
+            path="/bar",
+        )
+
+        s1 = self._S(
+            id=home.id,
+            server_name="bar",
+            path="/bar",
+            status=HomeState.ACTIVE,
+        )
+
+        barserv = yield self.sm.getServer("bar")
+        barserv.known_paths.add("/data/homes/bar")
+        done = yield self.updater.updateOne(home, [s1]).addErrback(
+            lambda err:err.trap(defer.FirstError))
+
+        self.assertIn("/data/homes/bar", barserv.known_paths)
+        self.assertIn((home.id, "bar"), self.db.objects[HomeState])
+        self.assertNotIn((home.id, "baz"), self.db.objects[HomeState])
+
+    @defer.inlineCallbacks
+    def test_unknown_server_source(self):
+        home = self._H(
+            server_name="bar",
+            path="/bar",
+        )
+
+        s1 = self._S(
+            id=home.id,
+            server_name="baz",
+            path="/bar",
+            status=HomeState.ARCHIVED,
+        )
+
+        barserv = yield self.sm.getServer("bar")
+
+        done = yield self.updater.updateOne(home, [s1]).addErrback(
+            lambda err:err.trap(defer.FirstError))
+
+        self.assertNotIn("/data/homes/bar", barserv.known_paths)
+        self.assertNotIn((home.id, "bar"), self.db.objects[HomeState])
+        self.assertIn((home.id, "baz"), self.db.objects[HomeState])

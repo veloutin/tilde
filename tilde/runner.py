@@ -130,7 +130,9 @@ class Updater(object):
 
 
         dst = self.serverManager.getServer(home.server_name)
-        dl = defer.DeferredList([src, dst], fireOnOneErrback=True)
+        dl = defer.DeferredList([src, dst],
+                                fireOnOneErrback=True,
+                                consumeErrors=True)
         dl.addCallback(self._migration_start, home, fromState)
         dl.addCallback(_done)
         dl.chainDeferred(res)
