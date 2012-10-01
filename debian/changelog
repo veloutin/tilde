@@ -1,3 +1,10 @@
+tilde (1.0rc1) lucid; urgency=low
+
+  * Rewrite into centralized service
+  * Support migration of homes across servers
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Mon, 01 Oct 2012 13:17:40 -0400
+
 tilde (0.5) lucid; urgency=low
 
   * Initial release.
