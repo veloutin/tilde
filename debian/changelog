@@ -1,4 +1,4 @@
-tilde (1.0rc1) lucid; urgency=low
+tilde (1.0rc1) precise; urgency=low
 
   * Rewrite into centralized service
   * Support migration of homes across servers
