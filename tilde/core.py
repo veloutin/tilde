@@ -174,7 +174,7 @@ class ShareUpdater(object):
         if home.owner:
             cmd.extend(["&&",
                         self.CMD_CHOWN,
-                        "{0}:{1}".format(
+                        "'{0}':'{1}'".format(
                             home.owner,
                             (home.group or '')),
                         realpath])
