@@ -1,3 +1,9 @@
+tilde (1.0rc2) precise; urgency=low
+
+  * quote user/groups for chown
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Wed, 03 Oct 2012 09:59:15 -0400
+
 tilde (1.0rc1) precise; urgency=low
 
   * Rewrite into centralized service
