@@ -23,7 +23,8 @@
 import sys
 from ConfigParser import SafeConfigParser
 
-from twisted.python import log
+import logging
+log = logging.getLogger(__name__)
 
 class Server(object):
     def __init__(self,
@@ -89,7 +90,7 @@ def setup_environment(cfg):
             try:
                 store.close()
             except Exception:
-                log.err("Failed to close a store")
+                log.exception("Failed to close a store")
         gsm.unregisterUtility(ex)
 
     zs = ZStorm()

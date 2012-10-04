@@ -22,7 +22,10 @@
 
 import os
 
-from twisted.python import log
+import logging
+log = logging.getLogger(__name__)
+
+from tilde.util import log_err
 
 from twisted.internet import defer
 from twisted.internet.error import ProcessTerminated
@@ -243,7 +246,7 @@ class ShareUpdater(object):
         cmd = self.server.runCommand(" ".join(args),
                                      protocol=RunCommandProtocol)
         def _failed(reason):
-            log.err(
+            log_err(reason, log,
                 "Failed with output: {0} {1}".format(
                     cmd.out.getvalue(), cmd.err.getvalue()),
                 reason)

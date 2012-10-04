@@ -21,7 +21,8 @@
 # You should have received a copy of the GNU General Public License
 # along with tilde.  If not, see <http://www.gnu.org/licenses/>.
 
-import logging
+import logging.config
+log = logging.getLogger("tilde.bin.tilded")
 import optparse
 import pdb
 
@@ -29,10 +30,10 @@ from twisted.internet import reactor, task
 
 from tilde import runner, loader
 
-
 opt = optparse.OptionParser()
 opt.set_default("loglevel", logging.WARN)
 opt.add_option("-c", "--config", dest="cfgfile", default="/etc/tilde/tilde.ini")
+opt.add_option("-l", "--logging", dest="logcfgfile", default=None)
 
 opt.add_option("-v", action="store_const", dest="loglevel",
                const=logging.INFO, help="verbose output")
@@ -43,21 +44,26 @@ opt.add_option("-q", action="store_const", dest="loglevel",
 
 opt.add_option("-i", type=int, dest="interval", default=0,
               help="Run every INTERVAL seconds")
-opt.add_option("--pdb", action="store_true", dest="pdb")
+#opt.add_option("--pdb", action="store_true", dest="pdb")
 
 
 opts, args = opt.parse_args()
-logging.basicConfig(level=opts.loglevel)
-from twisted.python import log
-obs = log.PythonLoggingObserver()
+if opts.logcfgfile:
+    logging.config.fileConfig(opts.logcfgfile)
+    logging.root.setLevel(opts.loglevel)
+else:
+    logging.basicConfig(level=opts.loglevel)
+
+from twisted.python.log import PythonLoggingObserver
+obs = PythonLoggingObserver()
 obs.start()
 
 def handle_interrupt(f):
     f.trap(KeyboardInterrupt)
-    logging.info("Interrupted")
+    log.info("Interrupted")
 
 def fail_miserably(f):
-    logging.error("Failed with error: %s", f.value)
+    log.error("Failed with error: %s", f.value)
     reactor.stop()
 
 def done(result=None):
@@ -67,22 +73,16 @@ def debug(f):
     pdb.post_mortem(f.getTracebackObject())
     raise f
 
-def make_a_run(reactor, err=None):
-    cfg = task.deferLater(reactor, 0, loader.load_config, opts.cfgfile)
-    cfg.addCallback(loader.setup_environment)
-    cfg.addCallback(runner.run, reactor)
-    if opts.pdb:
-        cfg.addErrback(debug)
-    if err:
-        cfg.addErrback(err)
-    return cfg
+config = loader.load_config(opts.cfgfile)
+loader.setup_environment(config)
+service = runner.getService(config, reactor)
 
 if not opts.interval:
-    run = make_a_run(reactor)
+    run = runner.run(service, config)
 else:
     def log_and_continue(err):
-        logging.error("Failed with error: %s", err.value)
-    loop = task.LoopingCall(make_a_run, reactor, log_and_continue)
+        log.error("Failed with error: %s", err.value)
+    loop = task.LoopingCall(runner.run, service, config)
     run = loop.start(opts.interval)
 
 run.addErrback(handle_interrupt)
