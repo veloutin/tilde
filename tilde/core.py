@@ -22,7 +22,10 @@
 
 import os
 
-from twisted.python import log
+import logging
+log = logging.getLogger(__name__)
+
+from tilde.util import log_err
 
 from twisted.internet import defer
 from twisted.internet.error import ProcessTerminated
@@ -30,6 +33,9 @@ from twisted.internet.error import ProcessTerminated
 from tilde import models
 from tilde.ssh import SSHServer, RunCommandProtocol
 
+
+class UnknownServer(Exception):
+    ''' Unknown server '''
 
 class ServerManager(object):
     def __init__(self, reactor, servers):
@@ -41,8 +47,8 @@ class ServerManager(object):
     def getServer(self, name):
         try:
             config = self.config[name]
-        except KeyError:
-            return defer.fail()
+        except KeyError, e:
+            return defer.fail(UnknownServer(name))
 
         if name in self.servers:
             return defer.succeed(self.servers[name])
@@ -97,6 +103,8 @@ class ShareUpdater(object):
     CMD_CHMOD = "/bin/chmod"
     CMD_RSYNC = "/usr/bin/rsync"
     CMD_MOVE = "/bin/mv"
+
+    RSYNC_FLAGS = "-rlptgoA"
 
     DEF_MODE = 0700
     def __init__(self, server, cfg):
@@ -206,7 +214,7 @@ class ShareUpdater(object):
         sourcepath = self.get_real_path(fromState.path, src_base)
         to_path = to.get_real_path(home.path)
 
-        cmd = [self.CMD_RSYNC, "-rlptgo"]
+        cmd = [self.CMD_RSYNC, self.RSYNC_FLAGS]
         if bwlimit:
             cmd.append("--bwlimit={0}".format(bwlimit))
 
@@ -228,6 +236,13 @@ class ShareUpdater(object):
         dst = self.get_real_path(toPath, self.archive_root)
         return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))
 
+    def checkStatus(self, homestate):
+        if homestate.status == models.HomeState.ACTIVE:
+            src_dir = self.root
+        else:
+            src_dir = self.archive_root
+        return self.get_path_info(self.get_real_path(homestate.path, src_dir))
+
     def move(self, homestate, toPath):
         if homestate.status == models.HomeState.ACTIVE:
             src_dir = self.root
@@ -243,7 +258,7 @@ class ShareUpdater(object):
         cmd = self.server.runCommand(" ".join(args),
                                      protocol=RunCommandProtocol)
         def _failed(reason):
-            log.err(
+            log_err(reason, log,
                 "Failed with output: {0} {1}".format(
                     cmd.out.getvalue(), cmd.err.getvalue()),
                 reason)

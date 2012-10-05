@@ -1,11 +1,13 @@
 import sys
 import os
 import struct
+import logging
+log = logging.getLogger(__name__)
+
 
 from cStringIO import StringIO
 
 from twisted.python.failure import Failure
-from twisted.python import log
 from twisted.internet.error import (
     ProcessTerminated,
     ProcessDone,
@@ -22,7 +24,7 @@ from twisted.conch.ssh.connection import SSHConnection, EXTENDED_DATA_STDERR
 from twisted.conch.client.default import SSHUserAuthClient
 from twisted.conch.client.options import ConchOptions
 
-# setDebugging(True)
+from tilde.util import log_err
 
 class RemoteCommandProtocol(Protocol):
     """
@@ -190,7 +192,7 @@ class _CommandChannel(SSHChannel):
         self._protocol = protocol
 
     def channelOpen(self, ignored):
-        log.msg('exec ' + self._command)
+        log.info('exec ' + self._command)
         self.conn.sendRequest(self, 'exec', NS(self._command))
         self._protocol.makeConnection(self)
 
@@ -223,8 +225,9 @@ class _CommandChannel(SSHChannel):
 def main():
     from twisted.internet import reactor
 
-    from twisted.python.log import startLogging
-    startLogging(sys.stdout)
+    logging.basicConfig(level=logging.DEBUG)
+    from twisted.python.log import PythonLoggingObserver
+    obs = PythonLoggingObserver()
     server = SSHServer(reactor, "localhost", 22)
     d = server.connect()
 
@@ -232,8 +235,8 @@ def main():
         p1 = server.runCommand("ls /root", RunCommandProtocol)
         p2 = server.runCommand("whoami", RunCommandProtocol)
         c1, c2 = p1.finished, p2.finished
-        c1.addErrback(log.err, "ssh command/copy to stdout failed")
-        c2.addErrback(log.err, "ssh command/copy to stdout failed")
+        c1.addErrback(log_err, log, "ssh command/copy to stdout failed")
+        c2.addErrback(log_err, log, "ssh command/copy to stdout failed")
         dl = DeferredList([c1, c2])
         def printResults(reslist):
             print "p1 out:", p1.out.getvalue()
