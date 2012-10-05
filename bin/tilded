@@ -80,8 +80,6 @@ service = runner.getService(config, reactor)
 if not opts.interval:
     run = runner.run(service, config)
 else:
-    def log_and_continue(err):
-        log.error("Failed with error: %s", err.value)
     loop = task.LoopingCall(runner.run, service, config)
     run = loop.start(opts.interval)
 

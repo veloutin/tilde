@@ -111,7 +111,7 @@ class MockShareUpdater(core.ShareUpdater):
         return defer.succeed(path in self.known_paths)
 
     def get_path_info(self, path):
-        if path in self.known_hosts:
+        if path in self.known_paths:
             res = {"type":"directory",
                    "user":"user",
                    "group":"group",

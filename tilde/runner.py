@@ -180,13 +180,22 @@ class Updater(object):
                 HomeState.server_name == server)
 
             if not existing:
-                defer.returnValue(newpath)  # This breaks and returns
+                defer.returnValue(newpath)
 
             suffix += 1
             newpath = path + u"-{0}".format(suffix)
         else:
             raise Exception("Unable to find free archive path")
 
+    @defer.inlineCallbacks
+    def checkState(self, state):
+        srv = yield self.serverManager.getServer(state.server_name)
+        path_info = yield srv.checkStatus(state)
+        if path_info is None:
+            log.info("Path %s doesn't exist, clearing", state)
+            rmed = yield self.deleteState(state)
+
+        defer.returnValue(path_info)
 
     def archive(self, homestate):
         log.info("Archiving {0}".format(homestate))
@@ -216,7 +225,7 @@ class Updater(object):
         return res
 
 
-    def _update(self, res, home, source=None):
+    def _update(self, home, source=None):
         log.info("Updating {0} with {1}".format(home, source))
         if home.active:
             if source:
@@ -229,7 +238,15 @@ class Updater(object):
             else:
                 return defer.succeed("Nothing to do, already archived")
 
+
+    @defer.inlineCallbacks
     def updateOne(self, home, status):
+        checked_status = yield defer.gatherResults(
+            [self.checkState(s) for s in status],
+            consumeErrors=True
+        )
+
+        status = [s for (s, info) in zip(status, checked_status) if info]
         source = next(
             itertools.chain(
                 (s for s in status if s.status == HomeState.ACTIVE),
@@ -237,17 +254,15 @@ class Updater(object):
             ),
             None)
 
-        clean = defer.succeed("No cleanup required")
         if source:
             to_clean = [s for s in status if s is not source]
             if to_clean:
                 log.info("Multiple statuses found, cleaning them: {0}"
                         .format(to_clean))
                 ops = [self.remove(s) for s in to_clean]
-                clean = defer.DeferredList(ops)
+                clean = yield defer.DeferredList(ops)
 
-        clean.addCallback(self._update, home, source)
-        return clean
+        done = yield self._update(home, source)
 
 def getService(config, reactor=None):
     if reactor is None:
@@ -268,12 +283,14 @@ def getService(config, reactor=None):
     tx.earlyCleanup = _cleanup
     return tx
 
+
+
 @defer.inlineCallbacks
 def run(service, config):
     log.debug("Starting run")
     servers = yield service.listSharesToUpdate()
     work = (
-        service.updateOne(*r).addErrback(log_err, log)
+        service.updateOne(*r).addErrback(log_err, log, "failed to update")
         for r in servers
     )
     numworkers = int(config.get("workers", 10)) or 1
@@ -282,4 +299,3 @@ def run(service, config):
 
     dl = yield defer.DeferredList(workers)
     log.debug("Done")
-    defer.returnValue(dl)

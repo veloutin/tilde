@@ -19,6 +19,7 @@ from .mock import (
 from tilde.models import Home, HomeState
 from tilde.loader import Server
 from tilde.runner import Updater
+from tilde.core import UnknownServer
 
 SERVERS = {
     "foo" : Server("foo", "/data/homes", archive_root="/data/archive"),
@@ -155,6 +156,35 @@ class UpdateTest(unittest.TestCase):
         self.assertIn("/data/homes/foo", fooserv.known_paths)
         self.assertNotIn("/data/homes/bar", barserv.known_paths)
 
+    @defer.inlineCallbacks
+    def test_sync_missing_source(self):
+        home = self._H(
+            server_name = "foo",
+            path="/foo",
+        )
+
+        status = self._S(
+            id=home.id,
+            server_name="bar",
+            path="/bar",
+            status=HomeState.ACTIVE,
+        )
+
+        fooserv = yield self.sm.getServer("foo")
+        barserv = yield self.sm.getServer("bar")
+
+        self.assertNotIn("/data/homes/foo", fooserv.known_paths)
+
+        done = yield self.updater.updateOne(home, [status])
+
+        status = self.db.objects[HomeState][(home.id, "foo")]
+        self.assertEquals(status.server_name, "foo")
+        self.assertEquals(status.path, "/foo")
+        self.assertEquals(status.status, HomeState.ACTIVE)
+
+        self.assertNotIn((home.id, "bar"), self.db.objects[HomeState])
+        self.assertIn("/data/homes/foo", fooserv.known_paths)
+        self.assertNotIn("/data/homes/bar", barserv.known_paths)
 
     @defer.inlineCallbacks
     def test_load_remote_archive(self):
