@@ -151,11 +151,13 @@ class ShareUpdater(object):
             protocol=RunCommandProtocol)
 
         def _parse_out(reason):
-            lines = cmd.out.getvalue().splitlines()
+            info = cmd.out.getvalue().splitlines()[0].strip()
+            log.debug("Path info for %s %s: %s", self.name, path, info)
             res = dict(zip(("type", "user", "group", "mode"),
-                            lines[0].strip().split(":"),
+                            info.split(":"),
                            ))
             res["mode"] = int(res["mode"], 8)
+            return res
 
         def _failed(reason):
             reason.trap(ProcessTerminated)
