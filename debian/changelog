@@ -1,3 +1,19 @@
+tilde (1.0rc4) precise; urgency=low
+
+  * configurable commands
+  * fixed cleanup of homes
+  * defaults for server config
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Tue, 16 Oct 2012 11:36:38 -0400
+
+tilde (1.0rc3) precise; urgency=low
+
+  * better error handling
+  * configurable logging
+  * cleanup of non-existant homes
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Fri, 05 Oct 2012 13:31:22 -0400
+
 tilde (1.0rc2) precise; urgency=low
 
   * quote user/groups for chown
