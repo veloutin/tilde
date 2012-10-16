@@ -26,6 +26,8 @@ from ConfigParser import SafeConfigParser
 import logging
 log = logging.getLogger(__name__)
 
+from tilde import commands
+
 class Server(object):
     def __init__(self,
                  hostname,
@@ -33,13 +35,15 @@ class Server(object):
                  user="root",
                  port=22,
                  archive_root=None,
-                 trash_root=None):
+                 trash_root=None,
+                 commands=None):
         self.hostname = hostname
         self.root = root
         self.user = user
         self.port = port
         self.archive_root = archive_root
         self.trash_root = trash_root
+        self.commands = commands
 
     def __repr__(self):
         return repr(self.__dict__)
@@ -63,14 +67,44 @@ def load_config(cfgfile):
     enc = conf['encoding']
 
     conf['servers'] = srv = {}
+
+    conf['defaults'] = defaults = {'commands':None}
+    if s.has_section('defaults'):
+        defaults.update(
+            (k, s.get('defaults', k).decode(enc))
+            for k in s.options('defaults')
+        )
+
+    conf['commands'] = cmds = {"ubuntu":commands.ubuntu}
     for section in [section
-                 for section in s.sections()
-                 if section.startswith("server:")]:
-        name = section.replace("server:", "", 1).decode(enc)
+                    for section in s.sections()
+                    if section.startswith("commands:")]:
+        name = section.replace("commands:", "", 1).decode(enc)
         opts = dict(
             (k, s.get(section, k).decode(enc))
             for k in s.options(section)
         )
+
+        inherit = opts.pop("__inherit__", None)
+
+        c = cmds[inherit].copy() if inherit else commands.Commands()
+        for k, v in opts.iteritems():
+            setattr(c, k, v)
+
+        cmds[name] = c
+
+    for section in [section
+                 for section in s.sections()
+                 if section.startswith("server:")]:
+        name = section.replace("server:", "", 1).decode(enc)
+        opts = defaults.copy()
+        opts.update(
+            (k, s.get(section, k).decode(enc))
+            for k in s.options(section)
+        )
+
+        if opts["commands"]:
+            opts["commands"] = cmds[opts["commands"]]
 
         opts.setdefault("hostname", name)
 

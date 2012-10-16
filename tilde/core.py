@@ -32,6 +32,7 @@ from twisted.internet.error import ProcessTerminated
 
 from tilde import models
 from tilde.ssh import SSHServer, RunCommandProtocol
+from tilde.commands import ubuntu
 
 
 class UnknownServer(Exception):
@@ -96,22 +97,16 @@ class ServerManager(object):
 
 
 class ShareUpdater(object):
-    CMD_STAT = "/usr/bin/stat"
-    CMD_TEST = "/usr/bin/test"
-    CMD_MKDIR = "/bin/mkdir"
-    CMD_CHOWN = "/bin/chown"
-    CMD_CHMOD = "/bin/chmod"
-    CMD_RSYNC = "/usr/bin/rsync"
-    CMD_MOVE = "/bin/mv"
-
-    RSYNC_FLAGS = "-rlptgoA"
-
-    DEF_MODE = 0700
     def __init__(self, server, cfg):
         self.server = server
         self.name = cfg.hostname
         self.root = cfg.root
         self.archive_root = cfg.archive_root
+
+        self.commands = ubuntu if cfg.commands is None else cfg.commands
+
+        if self.archive_root is None:
+            self.archive_root = os.path.join(self.root, ".tilde_archive")
         self.trash_root = cfg.trash_root
         if self.trash_root is None:
             self.trash_root = os.path.join(self.archive_root, ".tilde_trash")
@@ -129,8 +124,7 @@ class ShareUpdater(object):
 
     def exists(self, path):
         d = defer.Deferred()
-        cmd = self.server.runCommand(
-            " ".join([self.CMD_TEST, "-e", path]))
+        cmd = self.server.runCommand(self.commands.test.format(path=path))
 
         def _exists(reason):
             print reason
@@ -147,7 +141,7 @@ class ShareUpdater(object):
     def get_path_info(self, path):
         d = defer.Deferred()
         cmd = self.server.runCommand(
-            " ".join([self.CMD_STAT, "-c%F:%U:%G:%a", path]),
+            self.commands.stat.format(path=path),
             protocol=RunCommandProtocol)
 
         def _parse_out(reason):
@@ -168,33 +162,20 @@ class ShareUpdater(object):
 
     def _make_parent(self, path):
         parent = os.path.split(os.path.normpath(path))[0]
-        return self.server.runCommand(
-            " ".join([self.CMD_MKDIR, "-p", parent])
-        ).finished
+        return self.server.runCommand(self.commands.mkdir.format(path=parent)
+                                     ).finished
 
 
     def create_home(self, home):
         d = defer.Deferred()
         realpath = self.get_real_path(home.path)
-        str_mod = "{0:03o}".format(self.DEF_MODE)
-        cmd = [self.CMD_MKDIR,
-               "-pm{0}".format(str_mod),
-               realpath]
+        cmd = self.commands.mkhome.format(
+            path=realpath,
+            owner=home.owner or '',
+            group=home.group or '',
+        )
 
-        if home.owner:
-            cmd.extend(["&&",
-                        self.CMD_CHOWN,
-                        "'{0}':'{1}'".format(
-                            home.owner,
-                            (home.group or '')),
-                        realpath])
-
-        cmd.extend(["&&",
-                    self.CMD_CHMOD,
-                    str_mod,
-                    realpath])
-
-        cmd = self.server.runCommand(" ".join(cmd))
+        cmd = self.server.runCommand(cmd)
 
         def _success(reason):
             return True
@@ -207,26 +188,24 @@ class ShareUpdater(object):
         cmd.finished.chainDeferred(d)
         return d
 
-    def sync(self, fromState, to, home, bwlimit=None):
+    def sync(self, fromState, to, home):
         if fromState.status == models.HomeState.ACTIVE:
             src_base = self.root
         else:
             src_base = self.archive_root
 
-        sourcepath = self.get_real_path(fromState.path, src_base)
+        source_path = self.get_real_path(fromState.path, src_base)
         to_path = to.get_real_path(home.path)
 
-        cmd = [self.CMD_RSYNC, self.RSYNC_FLAGS]
-        if bwlimit:
-            cmd.append("--bwlimit={0}".format(bwlimit))
-
-        dest = ":".join([to.name, to_path])
-        # Trailing slash on source to prevent copying dir inside itself
-        cmd.extend([sourcepath + "/", dest])
+        cmd = self.commands.sync.format(
+            src_path=source_path,
+            dst=to.name,
+            dst_path=to_path,
+        )
 
         d = to._make_parent(to_path)
         def _then(*r):
-            return self.server.runCommand(" ".join(cmd)).finished
+            return self.server.runCommand(cmd).finished
         d.addBoth(_then)
         return d
 
@@ -256,9 +235,10 @@ class ShareUpdater(object):
         return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))
 
     def _move(self, source, dest):
-        args = [self.CMD_MOVE, "-T", "--backup=t", source, dest]
-        cmd = self.server.runCommand(" ".join(args),
-                                     protocol=RunCommandProtocol)
+        cmd = self.server.runCommand(
+            self.commands.move.format(src=source, dst=dest),
+            protocol=RunCommandProtocol)
+
         def _failed(reason):
             log_err(reason, log,
                 "Failed with output: {0} {1}".format(
