@@ -236,7 +236,7 @@ class ShareUpdater(object):
 
     def _move(self, source, dest):
         cmd = self.server.runCommand(
-            self.commands.move.format(src=source, dst=dest),
+            self.commands.move.format(src_path=source, dst_path=dest),
             protocol=RunCommandProtocol)
 
         def _failed(reason):
