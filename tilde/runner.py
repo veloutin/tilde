@@ -54,6 +54,7 @@ class Updater(object):
     @transact
     def listSharesToUpdate(self, since=None):
         zs = getUtility(IZStorm).get("tilde")
+        zs.rollback()
         for home, status in itertools.groupby(
                 zs.using(
                         Home,
