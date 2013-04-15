@@ -23,33 +23,26 @@
 
 import logging.config
 log = logging.getLogger("tilde.bin.tilded")
-import optparse
 import pdb
+import sys
 
-from twisted.internet import reactor, task
+from twisted.internet import reactor
+from twisted.python import usage
 
 from tilde import runner, loader
+from tilde.tap import Options
 
-opt = optparse.OptionParser()
-opt.set_default("loglevel", logging.WARN)
-opt.add_option("-c", "--config", dest="cfgfile", default="/etc/tilde/tilde.ini")
-opt.add_option("-l", "--logging", dest="logcfgfile", default=None)
+opts = Options()
 
-opt.add_option("-v", action="store_const", dest="loglevel",
-               const=logging.INFO, help="verbose output")
-opt.add_option("-d", action="store_const", dest="loglevel",
-               const=logging.DEBUG, help="debug output")
-opt.add_option("-q", action="store_const", dest="loglevel",
-               const=logging.ERROR, help="quiet")
+try:
+    opts.parseOptions()
+except usage.UsageError, errortext:
+   print '%s: %s' % (sys.argv[0], errortext)
+   print '%s: Try --help for usage details.' % (sys.argv[0])
+   sys.exit(1)
 
-opt.add_option("-i", type=int, dest="interval", default=0,
-              help="Run every INTERVAL seconds")
-#opt.add_option("--pdb", action="store_true", dest="pdb")
-
-
-opts, args = opt.parse_args()
-if opts.logcfgfile:
-    logging.config.fileConfig(opts.logcfgfile)
+if opts['logging']:
+    logging.config.fileConfig(opts['logging'])
     logging.root.setLevel(opts.loglevel)
 else:
     logging.basicConfig(level=opts.loglevel)
@@ -73,16 +66,11 @@ def debug(f):
     pdb.post_mortem(f.getTracebackObject())
     raise f
 
-config = loader.load_config(opts.cfgfile)
+config = loader.load_config(opts["config"])
 loader.setup_environment(config)
-service = runner.getService(config, reactor)
+root = runner.getService(config, reactor, web=False)
 
-if not opts.interval:
-    run = runner.run(service, config)
-else:
-    loop = task.LoopingCall(runner.run, service, config)
-    run = loop.start(opts.interval)
-
+run = runner.run(root.updater, config)
 run.addErrback(handle_interrupt)
 run.addCallbacks(done, fail_miserably)
 

@@ -64,6 +64,17 @@ class Home(Storm):
             self.group or "",
         )
 
+    def to_json(self):
+        return dict(
+            id=self.id,
+            server_name=self.server_name,
+            path=self.path,
+            owner=self.owner,
+            group=self.group,
+            uuid=self.uuid,
+            ts=self.ts.isoformat() if self.ts else None
+        )
+
     @property
     def active(self):
         return self.path and self.server_name is not None
@@ -114,6 +125,15 @@ class HomeState(Storm):
             self.path,
             self.server_name,
             self.status,
+        )
+
+    def to_json(self):
+        return dict(
+            id=self.id,
+            server_name=self.server_name,
+            path=self.path,
+            status=self.status,
+            ts=self.ts.isoformat() if self.ts else None
         )
 
     def copy(self):

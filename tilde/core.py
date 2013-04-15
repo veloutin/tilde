@@ -127,7 +127,6 @@ class ShareUpdater(object):
         cmd = self.server.runCommand(self.commands.test.format(path=path))
 
         def _exists(reason):
-            print reason
             return True
 
         def _doesnt(reason):
@@ -204,9 +203,10 @@ class ShareUpdater(object):
         )
 
         d = to._make_parent(to_path)
+        @d.addBoth
         def _then(*r):
             return self.server.runCommand(cmd).finished
-        d.addBoth(_then)
+
         return d
 
     def archive(self, homestate, toPath):

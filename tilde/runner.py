@@ -36,13 +36,15 @@ from storm.zope.zstorm import IZStorm
 from storm.twisted.transact import Transactor, transact
 from storm.expr import LeftJoin, Desc
 
+from twisted.application import service
 from twisted.internet import defer
 from twisted.internet import task
-from twisted.python.threadpool import ThreadPool
 from twisted.python.failure import Failure
+from twisted.web.server import Site
 
 from tilde.models import Home, HomeState
 from tilde.core import ServerManager
+from tilde.rest import getResource
 
 
 
@@ -79,6 +81,18 @@ class Updater(object):
         hs = zs.get(HomeState, (homestate.id, homestate.server_name))
         zs.remove(hs)
 
+
+    @transact
+    def deleteHome(self, home):
+        zs = getUtility(IZStorm).get("tilde")
+        # Get a local copy for thread safety reasons
+        home = zs.get(Home, home.id)
+        if home:
+            for hs in zs.find(HomeState, HomeState.home == home):
+                zs.remove(hs)
+            zs.remove(home)
+
+
     @transact
     def updateState(self, homestate):
         zs = getUtility(IZStorm).get("tilde")
@@ -99,6 +113,12 @@ class Updater(object):
     def findState(self, *condition):
         zs = getUtility(IZStorm).get("tilde")
         res = zs.find(HomeState, *condition)
+        return [s.copy() for s in res]
+
+    @transact
+    def findHome(self, *condition):
+        zs = getUtility(IZStorm).get("tilde")
+        res = zs.find(Home, *condition)
         return [s.copy() for s in res]
 
     def create(self, home):
@@ -239,7 +259,6 @@ class Updater(object):
             else:
                 return defer.succeed("Nothing to do, already archived")
 
-
     @defer.inlineCallbacks
     def updateOne(self, home, status):
         checked_status = yield defer.gatherResults(
@@ -265,24 +284,64 @@ class Updater(object):
 
         done = yield self._update(home, source)
 
-def getService(config, reactor=None):
+
+class UpdaterService(service.Service):
+    def __init__(self, workers=1, interval=600):
+        self.workers = workers
+        self.interval = interval
+        self.task = None
+
+
+    @defer.inlineCallbacks
+    def perform_task(self):
+        log.debug("Starting run")
+        service = self.parent.updater
+        servers = yield service.listSharesToUpdate()
+        work = (
+            service.updateOne(*r).addErrback(log_err, log, "failed to update")
+            for r in servers
+        )
+        numworkers = self.workers
+        workers = [task.cooperate(work).whenDone()
+                   for i in xrange(numworkers)]
+
+        dl = yield defer.DeferredList(workers)
+        log.debug("Done")
+
+    def startService(self):
+        service.Service.startService(self)
+        self.task = task.LoopingCall(self.perform_task)
+        self.task.start(self.interval)
+
+    def stopService(self):
+        self.task.stop()
+
+def getService(config, reactor=None, web=True):
     if reactor is None:
         from twisted.internet import reactor
 
-    tp = ThreadPool(0, 5)
-    tp.start()
+    root = service.MultiService()
+
     sm = ServerManager(reactor, config["servers"])
-    tpTrigId = reactor.addSystemEventTrigger("before", "shutdown", tp.stop)
     smTrigId = reactor.addSystemEventTrigger("before", "shutdown", sm.loseConnections)
-    tx = Updater(Transactor(tp), sm)
+
+    tp = reactor.getThreadPool()
+    root.updater = Updater(Transactor(tp), sm)
+
+    updater = UpdaterService(int(config.get("workers", 10)),
+                             int(config.get("interval", 300)),
+                            )
+    root.addService(updater)
+    updater.parent = root
+
+    if web:
+        site = Site(getResource(config.get("rest", {}), root.updater))
+        reactor.listenTCP(8080, site, interface="127.0.0.1")
 
     def _cleanup(res=None):
         sm.loseConnections()
-        tp.stop()
-        reactor.removeSystemEventTrigger(tpTrigId)
         reactor.removeSystemEventTrigger(smTrigId)
-    tx.earlyCleanup = _cleanup
-    return tx
+    return root
 
 
 
