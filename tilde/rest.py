@@ -14,6 +14,7 @@ from twisted.web import server
 from twisted.web.guard import HTTPAuthSessionWrapper, DigestCredentialFactory
 
 from tilde.models import Home, HomeState
+from tilde.commands import Commands
 
 
 def use_to_json(obj):
@@ -129,6 +130,14 @@ class Merge(Resource):
         defer.returnValue((home, status))
 
 
+    def chownRefPath(self, server, path, ref):
+        return server.namedCommand(
+            Commands.chown_ref.name,
+            path=server.get_real_path(path),
+            ref=server.get_real_path(ref),
+        )
+
+
     @defer.inlineCallbacks
     def merge(self, homedict, path):
         source, sstatus = yield self._getCurrentState(
@@ -148,9 +157,13 @@ class Merge(Resource):
 
         source.server_name = dest.server_name
         source.path = os.path.join(dest.path, path)
+        source.owner = dest.owner
 
         if sstatus:
             yield self.service.migrate(source, sstatus)
+            sdf = self.service.serverManager.getServer(dest.server_name)
+            sdf.addCallback(self.chownRefPath, source.path, dest.path)
+            yield sdf
 
         yield self.service.deleteHome(source)
 

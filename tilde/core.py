@@ -256,3 +256,9 @@ class ShareUpdater(object):
 
         dst = self.get_real_path(homestate.path, self.trash_root)
         return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))
+
+    def namedCommand(self, name, **kw):
+        return self.server.runCommand(
+            self.commands[name].format(**kw),
+            protocol=RunCommandProtocol,
+        ).finished
