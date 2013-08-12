@@ -1,3 +1,12 @@
+tilde (1.0.1) precise; urgency=low
+
+  * Fix interval mode
+  * add REST service, wip
+  * add the twistd plugin to setup
+  * support chown --ref when migrating a home into another
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Mon, 12 Aug 2013 13:51:53 -0400
+
 tilde (1.0rc4) precise; urgency=low
 
   * configurable commands
