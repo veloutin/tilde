@@ -127,7 +127,6 @@ class ShareUpdater(object):
         cmd = self.server.runCommand(self.commands.test.format(path=path))
 
         def _exists(reason):
-            print reason
             return True
 
         def _doesnt(reason):
@@ -204,9 +203,10 @@ class ShareUpdater(object):
         )
 
         d = to._make_parent(to_path)
+        @d.addBoth
         def _then(*r):
             return self.server.runCommand(cmd).finished
-        d.addBoth(_then)
+
         return d
 
     def archive(self, homestate, toPath):
@@ -236,7 +236,7 @@ class ShareUpdater(object):
 
     def _move(self, source, dest):
         cmd = self.server.runCommand(
-            self.commands.move.format(src=source, dst=dest),
+            self.commands.move.format(src_path=source, dst_path=dest),
             protocol=RunCommandProtocol)
 
         def _failed(reason):
@@ -256,3 +256,9 @@ class ShareUpdater(object):
 
         dst = self.get_real_path(homestate.path, self.trash_root)
         return self._make_parent(dst).addCallback(lambda *r: self._move(src, dst))
+
+    def namedCommand(self, name, **kw):
+        return self.server.runCommand(
+            self.commands[name].format(**kw),
+            protocol=RunCommandProtocol,
+        ).finished

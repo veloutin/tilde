@@ -46,7 +46,13 @@ setup(#cmdclass={'build_py': CompileI18nBuildWrapper},
     license="GPLv3",
     platforms=["Linux"],
     long_description="""Tilde home management system""",
-    packages=['tilde'],
+    packages=[
+        'tilde',
+        'twisted.plugins',
+    ],
+    package_data={
+        'twisted' : ['plugins/tilde.py'],
+    },
     scripts=["bin/tilded"],
     data_files = data_files_list,
     )
