@@ -35,7 +35,6 @@ class Options(usage.Options):
 def makeService(config):
     if config['logging']:
         logging.config.fileConfig(config['logging'])
-        logging.root.setLevel(config.loglevel)
     else:
         logging.basicConfig(level=config.loglevel)
 
