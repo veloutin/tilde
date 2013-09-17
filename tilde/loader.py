@@ -108,6 +108,13 @@ def load_config(cfgfile):
 
         opts.setdefault("hostname", name)
 
+        if "port" in opts:
+            try:
+                opts["port"] = int(opts["port"])
+            except ValueError, e:
+                # This may be a port name, which could be handled fine
+                pass
+
         srv[name] = Server(**opts)
 
     return conf
