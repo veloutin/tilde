@@ -1,3 +1,10 @@
+tilde (1.1.2) precise; urgency=low
+
+  * Fix file config root logger level
+  * Handle port numbers and names for servers
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Tue, 29 Oct 2013 08:50:55 -0400
+
 tilde (1.1.1) precise; urgency=low
 
   * Fix migrate to do a chown
