@@ -86,6 +86,7 @@ class SSHServer(object):
         self.connection = None
 
     def connect(self):
+        log.debug("Connecting to %s:%s", self._hostname, self._port)
         tcpEndpoint = TCP4ClientEndpoint(self._reactor,
                                          self._hostname,
                                          self._port)
@@ -112,6 +113,11 @@ class SSHServer(object):
         return p
 
 
+class AuthClient(SSHUserAuthClient):
+    def getPassword(self, prompt=None):
+        return None
+
+
 class SSHTransport(SSHClientTransport):
     _secured = False
 
@@ -121,7 +127,7 @@ class SSHTransport(SSHClientTransport):
     def connectionSecure(self):
         self._secured = True
         conn = _CommandConnection(self.factory)
-        userauth = SSHUserAuthClient(
+        userauth = AuthClient(
             self.factory.server.user, ConchOptions(), conn)
         userauth.preferredOrder = ['publickey']
         self.requestService(userauth)

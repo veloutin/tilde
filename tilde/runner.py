@@ -286,32 +286,45 @@ class Updater(object):
 
 
 class UpdaterService(service.Service):
-    def __init__(self, workers=1, interval=600):
+    def __init__(self, workers=1, interval=600, clock=None):
         self.workers = workers
         self.interval = interval
         self.task = None
-
+        self.clock = clock
 
     @defer.inlineCallbacks
     def perform_task(self):
         log.debug("Starting run")
         service = self.parent.updater
         servers = yield service.listSharesToUpdate()
+
         work = (
             service.updateOne(*r).addErrback(log_err, log, "failed to update")
             for r in servers
         )
         numworkers = self.workers
-        workers = [task.cooperate(work).whenDone()
+
+        def schedule(x):
+            return self.clock.callLater(0.00000001, x)
+
+        coop = task.Cooperator(scheduler=schedule)
+        coop.start()
+        workers = [coop.cooperate(work).whenDone()
                    for i in xrange(numworkers)]
 
         dl = yield defer.DeferredList(workers)
         log.debug("Done")
 
     def startService(self):
+        self.clock
+        if self.clock is None:
+            from twisted.internet import reactor
+            self.clock = reactor
+
         service.Service.startService(self)
         self.task = task.LoopingCall(self.perform_task)
-        self.task.start(self.interval)
+        self.task.clock = self.clock
+        self.task.start(self.interval).addErrback(log_err, log, "updater failed")
 
     def stopService(self):
         self.task.stop()
