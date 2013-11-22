@@ -133,8 +133,9 @@ class SSHTransport(SSHClientTransport):
         self.requestService(userauth)
 
     def connectionLost(self, reason):
-        if not self._secured:
-            self.factory.commandConnected.errback(reason)
+        log.debug("Connection lost: %r", reason)
+        if not self.factory.serverConnected.called:
+            self.factory.serverConnected.errback(reason)
 
 
 class _CommandConnection(SSHConnection):
@@ -226,37 +227,3 @@ class _CommandChannel(SSHChannel):
             self._protocol.errReceived(data)
         else:
             SSHChannel.extReceived(self, type, data)
-
-
-def main():
-    from twisted.internet import reactor
-
-    logging.basicConfig(level=logging.DEBUG)
-    from twisted.python.log import PythonLoggingObserver
-    obs = PythonLoggingObserver()
-    server = SSHServer(reactor, "localhost", 22)
-    d = server.connect()
-
-    def runCommands(server):
-        p1 = server.runCommand("ls /root", RunCommandProtocol)
-        p2 = server.runCommand("whoami", RunCommandProtocol)
-        c1, c2 = p1.finished, p2.finished
-        c1.addErrback(log_err, log, "ssh command/copy to stdout failed")
-        c2.addErrback(log_err, log, "ssh command/copy to stdout failed")
-        dl = DeferredList([c1, c2])
-        def printResults(reslist):
-            print "p1 out:", p1.out.getvalue()
-            print "p1 err:", p1.err.getvalue()
-            print "p2 out:", p2.out.getvalue()
-            print "p2 err:", p2.err.getvalue()
-            reactor.stop()
-
-        dl.addCallback(printResults)
-
-    d.addCallback(runCommands)
-    reactor.run()
-
-
-
-if __name__ == '__main__':
-    main()

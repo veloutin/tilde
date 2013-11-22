@@ -79,8 +79,9 @@ class ServerManager(object):
             d.callback(su)
 
     def _openErr(self, reason, name):
-            for d in self._deferreds.pop(name, []):
-                d.errback(reason)
+        log.error("Failed to connect to %s: %r", name, reason)
+        for d in self._deferreds.pop(name, []):
+            d.errback(reason)
 
     def _openConnection(self, name, config):
         return SSHServer(self.reactor,
