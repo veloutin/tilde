@@ -1,3 +1,9 @@
+tilde (1.1.3) precise; urgency=low
+
+  * Prevent ssh client from asking for passwords
+
+ -- Vincent Vinet <vvinet@revolutionlinux.com>  Fri, 22 Nov 2013 13:56:12 -0500
+
 tilde (1.1.2) precise; urgency=low
 
   * Fix file config root logger level
